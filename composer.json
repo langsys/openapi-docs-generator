@@ -1,0 +1,28 @@
+{
+    "name": "langsys/swagger-auto-generator",
+    "description": "Automatic Swagger and TS Docs Generator",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "darkaonline/l5-swagger": "dev-master"
+    },
+    "authors": [
+        {
+            "name": "Jarliev",
+            "email": "jarliev2@gmail.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "autoload": {
+        "psr-4": {
+            "Langsys\\SwaggerAutoGenerator\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Langsys\\SwaggerAutoGenerator\\SwaggerAutoGeneratorServiceProvider"
+            ]
+        }
+    }
+}
