@@ -8,6 +8,7 @@
     },
     "authors": [
         {
+            "role": "Developer",
             "name": "Jarliev",
             "email": "jarliev2@gmail.com"
         }
@@ -18,11 +19,25 @@
             "Langsys\\SwaggerAutoGenerator\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Langsys\\SwaggerAutoGenerator\\Tests\\": "tests/"
+        }
+    },
     "extra": {
         "laravel": {
             "providers": [
                 "Langsys\\SwaggerAutoGenerator\\SwaggerAutoGeneratorServiceProvider"
             ]
+        }
+    },
+    "require-dev": {
+        "pestphp/pest": "3.x-dev",
+        "orchestra/testbench": "9.x-dev"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     }
 }

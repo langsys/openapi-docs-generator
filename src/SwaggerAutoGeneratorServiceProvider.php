@@ -8,9 +8,12 @@ class SwaggerAutoGeneratorServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        $this->commands([
-            Console\Commands\GenerateDataSwagger::class,
-        ]);
+        if($this->app->runningInConsole()) {
+            $this->commands([
+                Console\Commands\DataObjectMakeCommand::class,
+                Console\Commands\GenerateDataSwagger::class,
+            ]);
+        }
 
         $this->publishes([
             __DIR__ . '/config/langsys-generator.php' => config_path('langsys-generator.php'),

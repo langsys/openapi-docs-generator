@@ -10,14 +10,15 @@ use Symfony\Component\Finder\Finder;
 
 class SwaggerSchemaGenerator
 {
-    private $finder;
-    private $_destinationFile;
+    private Finder $finder;
+    private string $_destinationFile;
 
     public function __construct()
     {
         $this->finder = new Finder();
         $this->exampleGenerator = new ExampleGenerator();
-        $this->_destinationFile = base_path('app/Swagger') . '/Schemas.php';
+        //$this->_destinationFile = base_path('app/Swagger') . '/Schemas.php';
+        $this->_destinationFile = app_path('Swagger/Schemas.php');
     }
 
     public function swaggerAnnotationsFromDataObjects(bool $cascade = false, bool $prettify = true): int
@@ -25,9 +26,11 @@ class SwaggerSchemaGenerator
         $dataObjects = $this->_getDataObjects();
         $generatedSchemas = 0;
 
-        //Create the file if it does not exists, delete its content if it does
+        //Create the file and folder if they don't exist, otherwise clear the file
         if (!file_exists($this->_destinationFile)) {
-            touch($this->_destinationFile);
+            if (!file_exists(dirname($this->_destinationFile))) {
+                mkdir(dirname($this->_destinationFile), 0777, true);
+            }
         } else {
             file_put_contents($this->_destinationFile, '');
         }
