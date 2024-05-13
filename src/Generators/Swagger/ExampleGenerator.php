@@ -2,22 +2,17 @@
 
 namespace Langsys\SwaggerAutoGenerator\Generators\Swagger;
 
-
-use App\Models\Locale;
-use Faker\Factory;
 use Illuminate\Support\Str;
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Traits\HasUserFunctions;
 
 class ExampleGenerator
 {
-    use HasUserFunctions;
 
     const FAKER_FUNCTION_PREFIX = ':';
     const SINGLE_QUOTE_IDENTIFIER = '#[SINGLE_QUOTE]';
 
     // Variable will only need to contain any of these keys so the function is called
 
-    private $faker;
+    private \Faker\Generator $faker;
 
     public function __construct()
     {
@@ -48,14 +43,20 @@ class ExampleGenerator
         }
     }
 
-    private function _getExampleFunction(string $name): string|bool
+    private function _getExampleFunction(string $name): callable|bool
     {
         if (str_starts_with($name, self::FAKER_FUNCTION_PREFIX)) {
-            return str_replace(self::FAKER_FUNCTION_PREFIX, '', $name);
+            $functionName = str_replace(self::FAKER_FUNCTION_PREFIX, '', $name);
+            return [$this->faker, $functionName];
         }
-        foreach (config('langsys-generator.faker_attribute_mapper') as $hint => $function) {
+
+        $mapping = config('langsys-generator.faker_attribute_mapper');
+        foreach ($mapping as $hint => $function) {
             if (str_contains($name, $hint)) {
-                return $function;
+                if (is_array($function)) {
+                    return $function;  // Directly return the callable array
+                }
+                return [$this, $function];
             }
         }
 

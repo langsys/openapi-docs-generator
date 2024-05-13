@@ -18,7 +18,7 @@ class SwaggerSchemaGenerator
         $this->finder = new Finder();
         $this->exampleGenerator = new ExampleGenerator();
         //$this->_destinationFile = base_path('app/Swagger') . '/Schemas.php';
-        $this->_destinationFile = app_path('Swagger/Schemas.php');
+        $this->_destinationFile = config('langsys-generator.paths.swagger_docs');
     }
 
     public function swaggerAnnotationsFromDataObjects(bool $cascade = false, bool $prettify = true): int

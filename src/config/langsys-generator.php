@@ -3,15 +3,18 @@
 return [
     /*
     |--------------------------------------------------------------------------
-    | Output Dir Path
+    | Dir Path
     |--------------------------------------------------------------------------
     |
     | This value is the path of the directory where the generated swagger file
     | will be saved.
     |
     */
-    'output_dir' => base_path('app/Swagger'),
 
+    'paths' => [
+        'data_objects' => app_path('DataObjects'),
+        'swagger_docs' => app_path('Swagger/Schemas.php')
+    ],
     /*
        |--------------------------------------------------------------------------
        | Faker Attribute Mapper
@@ -30,6 +33,13 @@ return [
         'locale' => 'locale',
         'phone' => 'phoneNumber',
         '_id' => 'id'
+    ],
+
+    //These are examples of custom functions that can be used in the data object, you can add more functions here, or remove them if you don't need them.
+    'custom_functions' => [
+        'id' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'id'],
+        'locale' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'locale'],
+        'date' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'date'],
     ],
 
     /*
@@ -68,4 +78,10 @@ return [
             'type' => 'int'
         ],
     ],
+
+    /*
+     * This value is the suffix of the data object. If you have a custom suffix for the data object, you can set it here.
+     * Otherwise, the default suffix is 'Data'.
+     */
+    'data_object_suffix' => 'Data',
 ];

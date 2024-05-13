@@ -38,7 +38,7 @@ final class DataObjectMakeCommand extends Command
         })->implode(",\n");
 
         $namespace = $this->getDefaultNamespace($this->laravel->getNamespace());
-        $class = class_basename($modelClass) . 'Data';
+        $class = class_basename($modelClass) . config('langsys-generator.data_object_suffix');
 
         $stub = $this->getStub();
         $contents = str_replace(
@@ -47,7 +47,7 @@ final class DataObjectMakeCommand extends Command
             file_get_contents($stub)
         );
 
-        $path = app_path("DataObjects/{$class}.php");
+        $path = config('langsys-generator.paths.data_objects') . "/{$class}.php";
         if (file_exists($path)) {
             $this->error("{$class} already exists.");
             return;
@@ -59,7 +59,7 @@ final class DataObjectMakeCommand extends Command
         $this->info("{$class} created successfully.");
     }
 
-    protected function resolveType($dbType)
+    protected function resolveType($dbType): string
     {
         return match (true) {
             Str::startsWith($dbType, ['int', 'tinyint', 'smallint', 'mediumint', 'bigint']) => 'int',

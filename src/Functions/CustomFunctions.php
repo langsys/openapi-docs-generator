@@ -1,11 +1,11 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Generators\Swagger\Traits;
+namespace Langsys\SwaggerAutoGenerator\Functions;
 
 use App\Models\Locale;
 
-trait HasUserFunctions {
-
+class CustomFunctions
+{
     public function id(string $type): string|int
     {
         return $type === 'int' ? random_int(1, 1000) : $this->faker->uuid();
@@ -23,5 +23,4 @@ trait HasUserFunctions {
         $date = $this->faker->dateTimeThisYear()->format('Ymd H:i:s');
         return $type === 'int' ? strtotime($date) : $date;
     }
-
 }
