@@ -32,6 +32,7 @@ class SwaggerSchemaGenerator
                 mkdir(dirname($this->_destinationFile), 0777, true);
             }
         } else {
+            //Delete the file content
             file_put_contents($this->_destinationFile, '');
         }
 

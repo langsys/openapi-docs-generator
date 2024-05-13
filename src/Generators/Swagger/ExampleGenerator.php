@@ -12,7 +12,7 @@ class ExampleGenerator
 
     // Variable will only need to contain any of these keys so the function is called
 
-    private \Faker\Generator $faker;
+    private $faker;
 
     public function __construct()
     {
@@ -34,6 +34,7 @@ class ExampleGenerator
         try {
             unset($arguments['type']);
             $camelCaseName = Str::camel($name);
+
             $example = $function ? $this->faker->$function(...$arguments) : $this->faker->$camelCaseName(...$arguments);
             $example = is_array($example) ? array_pop($example) : $example;
 
@@ -53,10 +54,7 @@ class ExampleGenerator
         $mapping = config('langsys-generator.faker_attribute_mapper');
         foreach ($mapping as $hint => $function) {
             if (str_contains($name, $hint)) {
-                if (is_array($function)) {
-                    return $function;  // Directly return the callable array
-                }
-                return [$this, $function];
+                return $function;
             }
         }
 
