@@ -3,12 +3,15 @@
 namespace Langsys\SwaggerAutoGenerator\Functions;
 
 use App\Models\Locale;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 class CustomFunctions
 {
+
     public function id(string $type): string|int
     {
-        return $type === 'int' ? random_int(1, 1000) : $this->faker->uuid();
+        return $type === 'int' ? random_int(1, 1000) : Str::uuid();
     }
 
     public function locale(): string
@@ -20,7 +23,7 @@ class CustomFunctions
 
     public function date(string $type): string|int
     {
-        $date = $this->faker->dateTimeThisYear()->format('Ymd H:i:s');
+        $date = Carbon::now()->format('Y-m-d H:i:s');
         return $type === 'int' ? strtotime($date) : $date;
     }
 }
