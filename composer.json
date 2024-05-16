@@ -1,6 +1,6 @@
 {
     "name": "langsys/swagger-auto-generator",
-    "description": "Automatic Swagger and TS Docs Generator",
+    "description": "Automatic Swagger and DTO Generator Docs Generator",
     "type": "library",
     "license": "MIT",
     "require": {
