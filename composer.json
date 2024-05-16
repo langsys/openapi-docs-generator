@@ -5,7 +5,7 @@
     "license": "MIT",
     "require": {
         "darkaonline/l5-swagger": "^8.4",
-        "spatie/laravel-data": "dev-main"
+        "spatie/laravel-data": "^3.9"
     },
     "authors": [
         {
