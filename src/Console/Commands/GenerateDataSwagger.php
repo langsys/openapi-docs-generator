@@ -12,7 +12,7 @@ class GenerateDataSwagger extends Command
      *
      * @var string
      */
-    protected $signature = 'langsys-swagger:generate {--cascade} {--docs} {--pretty} {--ts}';
+    protected $signature = 'data-swagger:generate {--cascade} {--docs} {--pretty} {--ts}';
 
     /**
      * The console command description.

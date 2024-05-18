@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 
 final class DataObjectMakeCommand extends Command
 {
-    protected $signature = "langsys:dto {--model=}";
+    protected $signature = "data-swagger:dto {--model=}";
     protected $description = "Create a new Spatie DTO";
     protected $type = 'Data Transfer Object';
 

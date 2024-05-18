@@ -35,7 +35,7 @@ Modify the `paths` array to point to the directory where your DataObjects and La
 You can generate the Langsys Schemas by running the following command:
 
 ```bash
-php artisan langsys-swagger:generate
+php artisan data-swagger:generate
 ```
 
 This will generate Swagger Schemas based on the configuration file.
@@ -43,7 +43,7 @@ This will generate Swagger Schemas based on the configuration file.
 To Generate the Data Objects, you can run the following command:
 
 ```bash
-php artisan langsys:dto --model="App\Models\User"
+php artisan data-swagger:dto --model="App\Models\User"
 ```
 
 This will generate a DataObject for the User model.
