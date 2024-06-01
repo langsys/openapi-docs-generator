@@ -6,7 +6,6 @@ use Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes\SwaggerAttribute;
 use Langsys\SwaggerAutoGenerator\Generators\Swagger\Traits\PrettyPrints;
 use Exception;
 use Illuminate\Support\Collection;
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Property;
 use ReflectionClass;
 use ReflectionProperty;
 use ReflectionType;
@@ -94,6 +93,10 @@ class Schema implements PrintsSwagger
         return str_replace(["'", ExampleGenerator::SINGLE_QUOTE_IDENTIFIER], ['"', "'"], $swaggerSchema);
     }
 
+    /**
+     * @throws \ReflectionException
+     * @throws \Throwable
+     */
     private function _generateProperties(string $className)
     {
         $reflection = new ReflectionClass($className);
@@ -109,6 +112,7 @@ class Schema implements PrintsSwagger
             $content = $example;
             $subSchema = null;
 
+            $enumValues = [];
             if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
                 $arguments = [...$arguments, 'type' => $typeName];
                 // As directly declared functions inside example generator take regular parameters then spread the array
@@ -129,7 +133,9 @@ class Schema implements PrintsSwagger
             }
 
             if (enum_exists($typeName)) {
-                $typeName = 'string';
+                $enumValues = array_column($typeName::cases(), 'value');
+                $typeName = 'enum';
+
             }
 
             // Data collections should be represented as arrays of the type defined in
@@ -150,7 +156,8 @@ class Schema implements PrintsSwagger
                     content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
                     type: $typeName,
                     required: !$type?->allowsNull(),
-                    prettify: $this->prettify
+                    prettify: $this->prettify,
+                    enum: $enumValues
                 )
             );
         }
