@@ -15,7 +15,8 @@ class Property implements PrintsSwagger
         public string|int|bool|Schema $content,
         public string $type,
         public bool $required = false,
-        protected $prettify = true
+        protected $prettify = true,
+         public array $enum = []
     ) {
     }
 
@@ -86,6 +87,20 @@ class Property implements PrintsSwagger
                 $newLines,
                 $nonPrimitiveProperty
             );
+        } elseif (!empty($this->enum) && $this->type === 'enum') {
+            $randomKey = array_rand($this->enum);
+            $exampleValue = $this->enum[$randomKey];
+            $enumValues = implode(', ', array_map(function ($value) {
+                return is_string($value) ? "'$value'" : $value;
+            }, $this->enum));
+            $enumValues = "{" . $enumValues . "}";
+            $swaggerProperty .= $this->prettyPrint(
+                "enum={$enumValues}, example= '$exampleValue',",
+                $attributeLevel,
+                $newLines,
+                $nonPrimitiveProperty
+            );
+
         } else {
             $content = $this->content;
 

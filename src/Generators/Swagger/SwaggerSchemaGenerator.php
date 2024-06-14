@@ -111,8 +111,8 @@ class SwaggerSchemaGenerator
     {
         $responseSchema = $this->_generateResponseSchema($schema);
         $paginatedResponseSchema = $this->_generatePaginatedResponseSchema($schema);
-
-        return [$responseSchema, $paginatedResponseSchema];
+        $listResponseSchemas = $this->_generateListResponseSchema($schema);
+        return [$responseSchema, $paginatedResponseSchema, $listResponseSchemas];
     }
 
     private function _generateResponseSchema(Schema $schema): Schema
@@ -155,6 +155,30 @@ class SwaggerSchemaGenerator
             );
         }
 
+        $paginatedResponseSchema->addProperty(
+            new Property(
+                'data',
+                'List of items',
+                $schema,
+                'array'
+            )
+        );
+
+
+        return $paginatedResponseSchema;
+    }
+    private function _generateListResponseSchema(Schema $schema): Schema
+    {
+        $paginatedResponseSchema = new Schema("{$schema->name}ListResponse", $schema->prettify, false);
+
+        $paginatedResponseSchema->addProperty(
+            new Property(
+                'status',
+                'Response status',
+                true,
+                'bool'
+            )
+        );
         $paginatedResponseSchema->addProperty(
             new Property(
                 'data',
