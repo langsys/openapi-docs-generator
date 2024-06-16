@@ -9,7 +9,6 @@ use Illuminate\Support\Collection;
 use ReflectionClass;
 use ReflectionProperty;
 use ReflectionType;
-use Spatie\LaravelData\Attributes\DataCollectionOf;
 
 class Schema implements PrintsSwagger
 {
@@ -124,7 +123,7 @@ class Schema implements PrintsSwagger
 
             // Lets set all booleans to true if they're not declared
             if ($typeName === 'bool' && $content === '') {
-                $content = true;
+                $content = is_bool($example) ? $example : true;
             }
 
             if (!$type->isBuiltin() && !enum_exists($typeName)) {

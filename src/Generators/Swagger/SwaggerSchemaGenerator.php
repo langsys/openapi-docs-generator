@@ -26,38 +26,56 @@ class SwaggerSchemaGenerator
         $dataObjects = $this->_getDataObjects();
         $generatedSchemas = 0;
 
-        //Create the file and folder if they don't exist, otherwise clear the file
-        if (!file_exists($this->_destinationFile)) {
-            if (!file_exists(dirname($this->_destinationFile))) {
-                mkdir(dirname($this->_destinationFile), 0777, true);
+        $fileExists = file_exists($this->_destinationFile);
+
+        if($fileExists) {
+            $previousContent = file_get_contents($this->_destinationFile);
+        }
+
+        try {
+            //Create the file and folder if they don't exist, otherwise clear the file
+            if ($fileExists &&
+                !file_exists(dirname($this->_destinationFile) &&
+                !mkdir($concurrentDirectory = dirname($this->_destinationFile), 0777, true) &&
+                !is_dir($concurrentDirectory))
+            ) {
+                throw new \RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
+
             }
-        } else {
             //Delete the file content
             file_put_contents($this->_destinationFile, '');
+
+            file_put_contents($this->_destinationFile, '<?php namespace App\Swagger;' . PHP_EOL . '/**  ' . PHP_EOL);
+
+            foreach ($dataObjects as $dataObject) {
+                if (!$schema = $this->generateSchema($dataObject, $prettify)) {
+                    continue;
+                }
+                $schemas = [$schema];
+
+                if ($schema->isResource()) {
+                    $schemas = [$schema, ...$this->_generateResponseSchemas($schema)];
+                }
+
+                foreach ($schemas as $schema) {
+                    $saved = file_put_contents(
+                            $this->_destinationFile,
+                            $schema->toSwagger(cascade: $cascade),
+                            FILE_APPEND
+                        ) !== false;
+                    $generatedSchemas += (int)$saved;
+                }
+            }
+            file_put_contents($this->_destinationFile, ' */ ' . PHP_EOL . ' class Schemas {}', FILE_APPEND);
+
+        } catch(Exception $e) {
+            if($fileExists) {
+                file_put_contents($this->_destinationFile, '');
+                file_put_contents($this->_destinationFile, $previousContent);
+            }
+            throw $e;
         }
 
-        file_put_contents($this->_destinationFile, '<?php namespace App\Swagger;' . PHP_EOL . '/**  ' . PHP_EOL);
-
-        foreach ($dataObjects as $dataObject) {
-            if (!$schema = $this->generateSchema($dataObject, $prettify)) {
-                continue;
-            }
-            $schemas = [$schema];
-
-            if ($schema->isResource()) {
-                $schemas = [$schema, ...$this->_generateResponseSchemas($schema)];
-            }
-
-            foreach ($schemas as $schema) {
-                $saved = file_put_contents(
-                        $this->_destinationFile,
-                        $schema->toSwagger(cascade: $cascade),
-                        FILE_APPEND
-                    ) !== false;
-                $generatedSchemas += (int)$saved;
-            }
-        }
-        file_put_contents($this->_destinationFile, ' */ ' . PHP_EOL . ' class Schemas {}', FILE_APPEND);
 
         return $generatedSchemas;
     }
