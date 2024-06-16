@@ -34,10 +34,10 @@ class SwaggerSchemaGenerator
 
         try {
             //Create the file and folder if they don't exist, otherwise clear the file
-            if ($fileExists &&
+            if (!$fileExists &&
                 !file_exists(dirname($this->_destinationFile) &&
-                !mkdir($concurrentDirectory = dirname($this->_destinationFile), 0777, true) &&
-                !is_dir($concurrentDirectory))
+                    !mkdir($concurrentDirectory = dirname($this->_destinationFile), 0777, true) &&
+                    !is_dir($concurrentDirectory))
             ) {
                 throw new \RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
 
@@ -68,7 +68,7 @@ class SwaggerSchemaGenerator
             }
             file_put_contents($this->_destinationFile, ' */ ' . PHP_EOL . ' class Schemas {}', FILE_APPEND);
 
-        } catch(Exception $e) {
+        } catch(\Throwable $e) {
             if($fileExists) {
                 file_put_contents($this->_destinationFile, '');
                 file_put_contents($this->_destinationFile, $previousContent);

@@ -38,7 +38,6 @@ return [
     //These are examples of custom functions that can be used in the data object, you can add more functions here, or remove them if you don't need them.
     'custom_functions' => [
         'id' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'id'],
-        'locale' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'locale'],
         'date' => [\Langsys\SwaggerAutoGenerator\Functions\CustomFunctions::class,'date'],
     ],
 

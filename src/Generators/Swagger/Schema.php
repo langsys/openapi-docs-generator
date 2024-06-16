@@ -9,6 +9,7 @@ use Illuminate\Support\Collection;
 use ReflectionClass;
 use ReflectionProperty;
 use ReflectionType;
+use Spatie\LaravelData\Attributes\DataCollectionOf;
 
 class Schema implements PrintsSwagger
 {
@@ -113,6 +114,7 @@ class Schema implements PrintsSwagger
 
             $enumValues = [];
             if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
+                $exampleFunction = (string)$exampleFunction;
                 $arguments = [...$arguments, 'type' => $typeName];
                 // As directly declared functions inside example generator take regular parameters then spread the array
                 // Otherwise pass on the arguments array to the magic function
