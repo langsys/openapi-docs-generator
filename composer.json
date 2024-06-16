@@ -5,9 +5,15 @@
     "license": "MIT",
     "require": {
         "darkaonline/l5-swagger": "^8.4",
-        "spatie/laravel-data": "^3.9"
+        "spatie/laravel-data": "^4.7"
     },
     "authors": [
+        {
+          "role": "Developer",
+          "name": "Humberto Cuadra",
+          "email": "hcuadra@flexmarkintl.com"
+        },
+
         {
             "role": "Developer",
             "name": "Jarliev",
