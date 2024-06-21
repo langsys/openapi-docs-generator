@@ -23,7 +23,8 @@ class Schema implements PrintsSwagger
     public function __construct(
         public string $name,
         public bool $prettify = true,
-        protected bool $fromClass = true
+        protected bool $fromClass = true,
+        protected bool $virutalSchema = false
     ) {
         $this->name = class_basename($name);
         // Identifies resource and also removes it from schema name to avoid too long names
@@ -60,7 +61,7 @@ class Schema implements PrintsSwagger
     public function toSwagger(bool $onlyProperties = false, bool $cascade = false, int $level = 0): string
     {
         // This means that we should only print a reference of the Schema instead of the whole thing
-        if ($onlyProperties && !$cascade) {
+        if ($onlyProperties && !$cascade && !$this->virutalSchema) {
             $schemaByReference = $this->prettyPrint("allOf={", $level, addPrefix: true);
             $schemaByReference .= $this->prettyPrint(
                 "@OA\Schema(ref = '#/components/schemas/{$this->name}'),",
@@ -111,6 +112,7 @@ class Schema implements PrintsSwagger
             $exampleFunction = $example ?? $propertyName;
             $content = $example;
             $subSchema = null;
+            $newSchema = null;
 
             $enumValues = [];
             if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
@@ -142,19 +144,41 @@ class Schema implements PrintsSwagger
             // Data collections should be represented as arrays of the type defined in
             if (str_contains($type?->getName(), 'DataCollection')) {
                 $typeName = 'array';
-                $subSchema = $attributeMeta->collectionOf->value ?? null;
+                $subSchema = $attributeMeta?->collectionOf?->value;
                 throw_if(
                     !$subSchema,
                     Exception::class,
                     'DataCollectionOf attribute definition is necessary when defining a property as DataCollection.'
                 );
+
+                if(property_exists($attributeMeta,'groupedcollection')) {
+                    $typeName = 'object';
+                    // Virtual schema forces to cascade a not use an allOf reference. allOf would not work here as this is not a schema created from a data object, but only to show a grouping
+                    $newSchema = new Schema("{$propertyName}GroupedCollection", $this->prettify, false,true);
+                    $newSchema->addProperty(
+                        new Property(
+                            name: $attributeMeta->groupedcollection->value,
+                            description: '',
+                            content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
+                            type: $typeName,
+                            required: !$type?->allowsNull(),
+                            prettify: $this->prettify,
+                            enum: $enumValues
+                        ));
+                    $content = $newSchema;
+                }
+            }
+
+
+            if(!$newSchema) {
+                $content = $subSchema ? new Schema($subSchema, $this->prettify) : $content;
             }
 
             $this->addProperty(
                 new Property(
                     name: $propertyName,
                     description: $attributeMeta->description->value ?? '',
-                    content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
+                    content: $content,
                     type: $typeName,
                     required: !$type?->allowsNull(),
                     prettify: $this->prettify,
