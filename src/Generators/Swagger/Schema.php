@@ -114,6 +114,10 @@ class Schema implements PrintsSwagger
             $subSchema = null;
             $newSchema = null;
 
+            if(property_exists($attributeMeta,'omit')) {
+                continue;
+            }
+
             $enumValues = [];
             if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
                 $exampleFunction = (string)$exampleFunction;
@@ -200,7 +204,7 @@ class Schema implements PrintsSwagger
                 $content = $attribute->class;
             } elseif ($attribute instanceof SwaggerAttribute) {
                 $attributeName = $attribute->getName();
-                $content = $attribute->content;
+                $content = property_exists($attribute,'content') ? $attribute->content : null;
             } else {
                 continue;
             }
