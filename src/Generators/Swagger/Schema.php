@@ -60,28 +60,23 @@ class Schema implements PrintsSwagger
 
     public function toSwagger(bool $onlyProperties = false, bool $cascade = false, int $level = 0): string
     {
-        // This means that we should only print a reference of the Schema instead of the whole thing
-        if ($onlyProperties && !$cascade && !$this->virutalSchema) {
+        if ($this->shouldPrintSchemaReference($onlyProperties, $cascade)) {
             return $this->printSchemaReference($level);
         }
 
         $swaggerSchema = $this->initializeSwaggerSchema($onlyProperties, $level);
-        $propertiesSchema = '';
-        $required = [];
+        $required = $this->getRequiredProperties();
+        $propertiesSchema = $this->generatePropertiesSchema($cascade, $level);
 
-        $this->properties->each(function (Property $property) use (&$propertiesSchema, &$required, $cascade, $level) {
-            $propertiesSchema .= $property->toSwagger($cascade, $level + 1);
-            if ($property->required) {
-                $required[] = $property->name;
-            }
-        });
-
-        if (!$onlyProperties && $this->isRequest && !empty($required)) {
-            $swaggerSchema .= $this->addRequiredProperties($required, $level);
-        }
-
+        $swaggerSchema .= $this->addRequiredPropertiesIfNeeded($required, $level);
         $swaggerSchema .= $propertiesSchema . $this->prettyPrint(' ),', $level, 2, true);
+
         return $this->formatSwaggerSchema($swaggerSchema);
+    }
+
+    private function shouldPrintSchemaReference(bool $onlyProperties, bool $cascade): bool
+    {
+        return $onlyProperties && !$cascade && !$this->virutalSchema;
     }
 
     private function printSchemaReference(int $level): string
@@ -103,13 +98,28 @@ class Schema implements PrintsSwagger
             $this->prettyPrint(" @OA\Schema( schema='{$this->name}',", $level, addPrefix: true);
     }
 
-    private function addRequiredProperties(array $required, int $level): string
+    private function getRequiredProperties(): array
     {
-        return $this->prettyPrint(
-            'required={"' . implode('","', $required) . '"},',
-            $level + 1,
-            addPrefix: true
-        );
+        return $this->properties->filter->required->pluck('name')->toArray();
+    }
+
+    private function generatePropertiesSchema(bool $cascade, int $level): string
+    {
+        return $this->properties->map(function (Property $property) use ($cascade, $level) {
+            return $property->toSwagger($cascade, $level + 1);
+        })->implode('');
+    }
+
+    private function addRequiredPropertiesIfNeeded(array $required, int $level): string
+    {
+        if ($this->isRequest && !empty($required)) {
+            return $this->prettyPrint(
+                'required={"' . implode('","', $required) . '"},',
+                $level + 1,
+                addPrefix: true
+            );
+        }
+        return '';
     }
 
     private function formatSwaggerSchema(string $swaggerSchema): string
@@ -125,117 +135,172 @@ class Schema implements PrintsSwagger
     {
         $reflection = new ReflectionClass($className);
         $properties = $reflection->getProperties(ReflectionProperty::IS_PUBLIC);
+        
         foreach ($properties as $property) {
-            $propertyName = $property->getName();
-            $type = $this->_getPropertyType($property);
-            $typeName = $type->getName();
-            $attributeMeta = $this->_toAttributeMeta($property->getAttributes());
-            $example = $attributeMeta->example->value ?? null;
-            $arguments = $attributeMeta->example->arguments ?? [];
-            $exampleFunction = $example ?? $propertyName;
-            $content = $example;
-            $subSchema = null;
-            $newSchema = null;
-            $typeClassName = array_reverse(explode('\\', $typeName))[0];
-
-            if(property_exists($attributeMeta,'omit')) {
+            $propertyMeta = $this->getPropertyMetadata($property);
+            
+            if ($propertyMeta->shouldOmit) {
                 continue;
             }
 
-            $enumValues = [];
-            if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
-                $exampleFunction = (string)$exampleFunction;
-                $arguments = [...$arguments, 'type' => $typeName];
-                // As directly declared functions inside example generator take regular parameters then spread the array
-                // Otherwise pass on the arguments array to the magic function
-                $content = method_exists($this->exampleGenerator, $exampleFunction) ?
-                    $this->exampleGenerator->$exampleFunction(...array_values($arguments)) :
-                    $this->exampleGenerator->$exampleFunction($arguments);
-            }
-
-            // Lets set all booleans to true if they're not declared
-            if ($typeName === 'bool' && $content === '') {
-                $content = is_bool($example) ? $example : true;
-            }
-
-            // We represent collections as arrays
-            if($typeClassName === 'Collection') {
-                $typeName = 'array';
-            }
-
-            if ($typeName !== 'array'&& !$type->isBuiltin() && !enum_exists($typeName)) {
-                $subSchema = $typeName;
-                $typeName = 'object';
-            }
-
-            if (enum_exists($typeName)) {
-                $enumValues = array_column($typeName::cases(), 'value');
-                $typeName = 'enum';
-
-            }
-            // Data collections should be represented as arrays of the type defined in
-            if ($typeClassName === 'DataCollection') {
-                $typeName = 'array';
-                $subSchema = $attributeMeta?->collectionOf?->value;
-                throw_if(
-                    !$subSchema,
-                    Exception::class,
-                    'DataCollectionOf attribute definition is necessary when defining a property as DataCollection.'
-                );
-
-                if(property_exists($attributeMeta,'groupedcollection')) {
-                    $typeName = 'object';
-                    // Virtual schema forces to cascade a not use an allOf reference. allOf would not work here as this is not a schema created from a data object, but only to show a grouping
-                    $newSchema = new Schema("{$propertyName}GroupedCollection", $this->prettify, false,true);
-                    $newSchema->addProperty(
-                        new Property(
-                            name: $attributeMeta->groupedcollection->value,
-                            description: '',
-                            content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
-                            type: $typeName,
-                            required: !$type?->allowsNull(),
-                            prettify: $this->prettify,
-                            enum: $enumValues
-                        ));
-                    $content = $newSchema;
-                }
-            }
-
-            if($typeName === 'array' && property_exists($attributeMeta,'groupedcollection')){
-                $newSchema = new Schema("{$propertyName}GroupedCollection", $this->prettify, false,true);
-                $newSchema->addProperty(
-                    new Property(
-                        name: $attributeMeta->groupedcollection->value,
-                        description: '',
-                        content: $content,
-                        type: $typeName,
-                        required: !$type?->allowsNull(),
-                        prettify: $this->prettify,
-                        enum: $enumValues
-                    ));
-
-                $content = $newSchema;
-            }
-
-
-            if(!$newSchema) {
-                $content = $subSchema ? new Schema($subSchema, $this->prettify) : $content;
-            }
-
-            $this->addProperty(
-                new Property(
-                    name: $propertyName,
-                    description: $attributeMeta->description->value ?? '',
-                    content: $content,
-                    type: $typeName,
-                    required: !$type?->allowsNull(),
-                    prettify: $this->prettify,
-                    enum: $enumValues
-                )
-            );
+            $this->processProperty($propertyMeta);
         }
     }
 
+    private function getPropertyMetadata(ReflectionProperty $property): object
+    {
+        $type = $this->_getPropertyType($property);
+        $attributeMeta = $this->_toAttributeMeta($property->getAttributes());
+        
+        return (object) [
+            'name' => $property->getName(),
+            'type' => $type,
+            'typeName' => $type->getName(),
+            'typeClassName' => array_reverse(explode('\\', $type->getName()))[0],
+            'attributeMeta' => $attributeMeta,
+            'example' => $attributeMeta->example->value ?? null,
+            'arguments' => $attributeMeta->example->arguments ?? [],
+            'shouldOmit' => property_exists($attributeMeta, 'omit'),
+        ];
+    }
+
+    private function processProperty(object $propertyMeta): void
+    {
+        $content = $this->generatePropertyContent($propertyMeta);
+        $typeName = $this->determinePropertyType($propertyMeta);
+        $subSchema = $this->getSubSchema($propertyMeta);
+        $enumValues = $this->getEnumValues($propertyMeta);
+        
+        $newSchema = $this->handleSpecialCases($propertyMeta, $typeName, $content, $subSchema);
+        
+        $this->addPropertyToSchema($propertyMeta, $typeName, $content, $subSchema, $enumValues, $newSchema);
+    }
+
+    private function generatePropertyContent(object $propertyMeta)
+    {
+        $example = $propertyMeta->example;
+        $arguments = $propertyMeta->arguments;
+        $exampleFunction = $example ?? $propertyMeta->name;
+        $content = $example;
+
+        if (str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX) || !$example) {
+            $exampleFunction = (string)$exampleFunction;
+            $arguments = [...$arguments, 'type' => $propertyMeta->typeName];
+            // As directly declared functions inside example generator take regular parameters then spread the array
+            // Otherwise pass on the arguments array to the magic function
+            $content = method_exists($this->exampleGenerator, $exampleFunction) ?
+                $this->exampleGenerator->$exampleFunction(...array_values($arguments)) :
+                $this->exampleGenerator->$exampleFunction($arguments);
+        }
+
+        // Lets set all booleans to true if they're not declared
+        if ($propertyMeta->typeName === 'bool' && $content === '') {
+            $content = is_bool($example) ? $example : true;
+        }
+
+        return $content;
+    }
+
+    private function determinePropertyType(object $propertyMeta): string
+    {
+        $typeName = $propertyMeta->typeName;
+
+        // We represent collections as arrays
+        if($propertyMeta->typeClassName === 'Collection') {
+            $typeName = 'array';
+        }
+
+        return $typeName;
+    }
+
+    private function getSubSchema(object $propertyMeta): ?string
+    {
+        $typeName = $propertyMeta->typeName;
+        $type = $propertyMeta->type;
+
+        if ($typeName !== 'array' && !$type->isBuiltin() && !enum_exists($typeName)) {
+            return $typeName;
+        }
+
+        return null;
+    }
+
+    private function getEnumValues(object $propertyMeta): array
+    {
+        $typeName = $propertyMeta->typeName;
+
+        if (enum_exists($typeName)) {
+            return array_column($typeName::cases(), 'value');
+        }
+
+        return [];
+    }
+
+    private function handleSpecialCases(object $propertyMeta, string &$typeName, &$content, ?string $subSchema): ?Schema
+    {
+        $attributeMeta = $propertyMeta->attributeMeta;
+
+        if ($typeName === 'array' && property_exists($attributeMeta, 'groupedcollection')) {
+            $newSchema = new Schema("{$propertyMeta->name}GroupedCollection", $this->prettify, false, true);
+            $newSchema->addProperty(
+                new Property(
+                    name: $attributeMeta->groupedcollection->value,
+                    description: '',
+                    content: $content,
+                    type: $typeName,
+                    required: !$propertyMeta->type?->allowsNull(),
+                    prettify: $this->prettify,
+                    enum: []
+                ));
+
+            $content = $newSchema;
+            return $newSchema;
+        }
+
+        if ($typeName === 'object' && property_exists($attributeMeta, 'groupedcollection')) {
+            $newSchema = new Schema("{$propertyMeta->name}GroupedCollection", $this->prettify, false, true);
+            $newSchema->addProperty(
+                new Property(
+                    name: $attributeMeta->groupedcollection->value,
+                    description: '',
+                    content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
+                    type: $typeName,
+                    required: !$propertyMeta->type?->allowsNull(),
+                    prettify: $this->prettify,
+                    enum: []
+                ));
+
+            $content = $newSchema;
+            return $newSchema;
+        }
+
+        if ($typeName === 'object' && property_exists($attributeMeta, 'collectionOf')) {
+            $typeName = 'array';
+            $subSchema = $attributeMeta->collectionOf->value;
+            throw_if(
+                !$subSchema,
+                Exception::class,
+                'DataCollectionOf attribute definition is necessary when defining a property as DataCollection.'
+            );
+        }
+
+        return null;
+    }
+
+    private function addPropertyToSchema(object $propertyMeta, string $typeName, $content, ?string $subSchema, array $enumValues, ?Schema $newSchema): void
+    {
+        $this->addProperty(
+            new Property(
+                name: $propertyMeta->name,
+                description: $propertyMeta->attributeMeta->description->value ?? '',
+                content: $newSchema ?? ($subSchema ? new Schema($subSchema, $this->prettify) : $content),
+                type: $typeName,
+                required: !$propertyMeta->type?->allowsNull(),
+                prettify: $this->prettify,
+                enum: $enumValues
+            )
+        );
+    }
 
     private function _toAttributeMeta(array $attributes): object
     {
