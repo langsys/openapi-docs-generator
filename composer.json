@@ -28,7 +28,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Langsys\\SwaggerAutoGenerator\\Tests\\": "tests/"
+            "Langsys\\SwaggerAutoGenerator\\Tests\\": "tests/",
+            "Tests\\": "tests/"
         }
     },
     "extra": {

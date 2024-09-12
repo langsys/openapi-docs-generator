@@ -62,19 +62,13 @@ class Schema implements PrintsSwagger
     {
         // This means that we should only print a reference of the Schema instead of the whole thing
         if ($onlyProperties && !$cascade && !$this->virutalSchema) {
-            $schemaByReference = $this->prettyPrint("allOf={", $level, addPrefix: true);
-            $schemaByReference .= $this->prettyPrint(
-                "@OA\Schema(ref = '#/components/schemas/{$this->name}'),",
-                $level + 1,
-                addPrefix: true
-            );
-            $schemaByReference .= $this->prettyPrint("}", $level, addPrefix: true);
-
-            return $schemaByReference;
+            return $this->printSchemaReference($level);
         }
-        $swaggerSchema = $onlyProperties ? '' :
-            $this->prettyPrint(" @OA\Schema( schema='{$this->name}',", $level, addPrefix: true);
+
+        $swaggerSchema = $this->initializeSwaggerSchema($onlyProperties, $level);
+        $propertiesSchema = '';
         $required = [];
+
         $this->properties->each(function (Property $property) use (&$propertiesSchema, &$required, $cascade, $level) {
             $propertiesSchema .= $property->toSwagger($cascade, $level + 1);
             if ($property->required) {
@@ -83,14 +77,43 @@ class Schema implements PrintsSwagger
         });
 
         if (!$onlyProperties && $this->isRequest && !empty($required)) {
-            $swaggerSchema .= $this->prettyPrint(
-                'required={"'.implode('","', $required).'"},',
-                $level + 1,
-                addPrefix: true
-            );
+            $swaggerSchema .= $this->addRequiredProperties($required, $level);
         }
 
-        $swaggerSchema .= $propertiesSchema.$this->prettyPrint(' ),', $level, 2, true);
+        $swaggerSchema .= $propertiesSchema . $this->prettyPrint(' ),', $level, 2, true);
+        return $this->formatSwaggerSchema($swaggerSchema);
+    }
+
+    private function printSchemaReference(int $level): string
+    {
+        $schemaByReference = $this->prettyPrint("allOf={", $level, addPrefix: true);
+        $schemaByReference .= $this->prettyPrint(
+            "@OA\Schema(ref = '#/components/schemas/{$this->name}'),",
+            $level + 1,
+            addPrefix: true
+        );
+        $schemaByReference .= $this->prettyPrint("}", $level, addPrefix: true);
+
+        return $schemaByReference;
+    }
+
+    private function initializeSwaggerSchema(bool $onlyProperties, int $level): string
+    {
+        return $onlyProperties ? '' :
+            $this->prettyPrint(" @OA\Schema( schema='{$this->name}',", $level, addPrefix: true);
+    }
+
+    private function addRequiredProperties(array $required, int $level): string
+    {
+        return $this->prettyPrint(
+            'required={"' . implode('","', $required) . '"},',
+            $level + 1,
+            addPrefix: true
+        );
+    }
+
+    private function formatSwaggerSchema(string $swaggerSchema): string
+    {
         return str_replace(["'", ExampleGenerator::SINGLE_QUOTE_IDENTIFIER], ['"', "'"], $swaggerSchema);
     }
 
@@ -113,6 +136,7 @@ class Schema implements PrintsSwagger
             $content = $example;
             $subSchema = null;
             $newSchema = null;
+            $typeClassName = array_reverse(explode('\\', $typeName))[0];
 
             if(property_exists($attributeMeta,'omit')) {
                 continue;
@@ -134,7 +158,12 @@ class Schema implements PrintsSwagger
                 $content = is_bool($example) ? $example : true;
             }
 
-            if (!$type->isBuiltin() && !enum_exists($typeName)) {
+            // We represent collections as arrays
+            if($typeClassName === 'Collection') {
+                $typeName = 'array';
+            }
+
+            if ($typeName !== 'array'&& !$type->isBuiltin() && !enum_exists($typeName)) {
                 $subSchema = $typeName;
                 $typeName = 'object';
             }
@@ -144,9 +173,8 @@ class Schema implements PrintsSwagger
                 $typeName = 'enum';
 
             }
-
             // Data collections should be represented as arrays of the type defined in
-            if (str_contains($type?->getName(), 'DataCollection')) {
+            if ($typeClassName === 'DataCollection') {
                 $typeName = 'array';
                 $subSchema = $attributeMeta?->collectionOf?->value;
                 throw_if(
@@ -171,6 +199,22 @@ class Schema implements PrintsSwagger
                         ));
                     $content = $newSchema;
                 }
+            }
+
+            if($typeName === 'array' && property_exists($attributeMeta,'groupedcollection')){
+                $newSchema = new Schema("{$propertyName}GroupedCollection", $this->prettify, false,true);
+                $newSchema->addProperty(
+                    new Property(
+                        name: $attributeMeta->groupedcollection->value,
+                        description: '',
+                        content: $content,
+                        type: $typeName,
+                        required: !$type?->allowsNull(),
+                        prettify: $this->prettify,
+                        enum: $enumValues
+                    ));
+
+                $content = $newSchema;
             }
 
 

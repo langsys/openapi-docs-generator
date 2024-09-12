@@ -11,14 +11,19 @@ use Symfony\Component\Finder\Finder;
 class SwaggerSchemaGenerator
 {
     private Finder $finder;
-    private string $_destinationFile;
-
-    public function __construct()
+    public ExampleGenerator $exampleGenerator;
+    private $_sourcePath;
+    private $_destinationFile;
+    public function __construct(
+        string $sourcePath,
+        string $destinationFile,
+        private string|null $_namespace = null
+    )
     {
         $this->finder = new Finder();
         $this->exampleGenerator = new ExampleGenerator();
-        //$this->_destinationFile = base_path('app/Swagger') . '/Schemas.php';
-        $this->_destinationFile = config('langsys-generator.paths.swagger_docs');
+        $this->_sourcePath = $sourcePath ?? app_path();
+        $this->_destinationFile = $destinationFile ?? config('langsys-generator.paths.swagger_docs');
     }
 
     public function swaggerAnnotationsFromDataObjects(bool $cascade = false, bool $prettify = true): int
@@ -31,21 +36,18 @@ class SwaggerSchemaGenerator
         if($fileExists) {
             $previousContent = file_get_contents($this->_destinationFile);
         }
-
         try {
-            //Create the file and folder if they don't exist, otherwise clear the file
-            if (!$fileExists &&
-                !file_exists(dirname($this->_destinationFile) &&
-                    !mkdir($concurrentDirectory = dirname($this->_destinationFile), 0777, true) &&
-                    !is_dir($concurrentDirectory))
-            ) {
-                throw new \RuntimeException(sprintf('Directory "%s" was not created', $concurrentDirectory));
+            $directory = dirname($this->_destinationFile);
 
+            if(!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+                throw new \RuntimeException(sprintf('Directory "%s" was not created', $directory));
             }
             //Delete the file content
             file_put_contents($this->_destinationFile, '');
 
-            file_put_contents($this->_destinationFile, '<?php namespace App\Swagger;' . PHP_EOL . '/**  ' . PHP_EOL);
+            $namespace = $this->_namespace ?? 'App\Swagger';
+
+            file_put_contents($this->_destinationFile, "<?php namespace {$namespace};" . PHP_EOL . '/**  ' . PHP_EOL);
 
             foreach ($dataObjects as $dataObject) {
                 if (!$schema = $this->generateSchema($dataObject, $prettify)) {
@@ -95,15 +97,24 @@ class SwaggerSchemaGenerator
     {
         $dataObjects = [];
 
-        foreach ($this->finder->files()->in(app_path()) as $file) {
+        foreach ($this->finder->files()->in($this->_sourcePath) as $file) {
             $relativePath = str_replace('.php', '', $file->getRelativePathname());
-            $className = 'App\\' . str_replace('/', '\\', $relativePath);
+            $className = $this->_getNamespace($this->_sourcePath) . '\\' . str_replace('/', '\\', $relativePath);
 
             if ($this->_isDataObject($className)) {
                 $dataObjects[] = $className;
             }
         }
         return $dataObjects;
+    }
+
+    private function _getNamespace(string $path): string
+    {
+        if (str_contains($path, 'app')) {
+            return 'App';
+        }
+        // This should now match the namespace in your test Data classes
+        return 'Langsys\\SwaggerAutoGenerator\\Tests\\Data';
     }
 
     private function _isDataObject(string $className)

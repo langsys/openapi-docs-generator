@@ -15,8 +15,8 @@ class Property implements PrintsSwagger
         public string|int|bool|Schema $content,
         public string $type,
         public bool $required = false,
-        protected $prettify = true,
-         public array $enum = []
+        protected $prettify = true,//
+        public array $enum = []
     ) {
     }
 
