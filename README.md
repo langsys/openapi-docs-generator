@@ -1,6 +1,6 @@
 # Laravel Langsys Swagger
 
-THIS PACKAGE IS ON ALPHA, README IS FAR FROM COMPLETE. DO NOT USE IT YET.
+THIS PACKAGE IS ON ALPHA, README IS FAR FROM COMPLETE. DO NOT USE IT YET. UNLESS YOU FEEL LIKE FIGURING IT OUT :)
 
 This package is an extension for Laravel Data by Spatie and L5-Swagger by Darkaonline. It allows you to generate Swagger documentation and DTOs for your API based on the Laravel Data package.
 
