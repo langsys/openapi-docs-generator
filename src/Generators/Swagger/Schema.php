@@ -60,26 +60,26 @@ class Schema implements PrintsSwagger
 
     public function toSwagger(bool $onlyProperties = false, bool $cascade = false, int $level = 0): string
     {
-        if ($this->shouldPrintSchemaReference($onlyProperties, $cascade)) {
-            return $this->printSchemaReference($level);
+        if ($this->_shouldPrintSchemaReference($onlyProperties, $cascade)) {
+            return $this->_printSchemaReference($level);
         }
 
-        $swaggerSchema = $this->initializeSwaggerSchema($onlyProperties, $level);
-        $required = $this->getRequiredProperties();
-        $propertiesSchema = $this->generatePropertiesSchema($cascade, $level);
+        $swaggerSchema = $this->_initializeSwaggerSchema($onlyProperties, $level);
+        $required = $this->_getRequiredProperties();
+        $propertiesSchema = $this->_generatePropertiesSchema($cascade, $level);
 
-        $swaggerSchema .= $this->addRequiredPropertiesIfNeeded($required, $level);
+        $swaggerSchema .= $this->_addRequiredPropertiesIfNeeded($required, $level);
         $swaggerSchema .= $propertiesSchema . $this->prettyPrint(' ),', $level, 2, true);
 
-        return $this->formatSwaggerSchema($swaggerSchema);
+        return $this->_formatSwaggerSchema($swaggerSchema);
     }
 
-    private function shouldPrintSchemaReference(bool $onlyProperties, bool $cascade): bool
+    private function _shouldPrintSchemaReference(bool $onlyProperties, bool $cascade): bool
     {
         return $onlyProperties && !$cascade && !$this->virutalSchema;
     }
 
-    private function printSchemaReference(int $level): string
+    private function _printSchemaReference(int $level): string
     {
         $schemaByReference = $this->prettyPrint("allOf={", $level, addPrefix: true);
         $schemaByReference .= $this->prettyPrint(
@@ -92,25 +92,25 @@ class Schema implements PrintsSwagger
         return $schemaByReference;
     }
 
-    private function initializeSwaggerSchema(bool $onlyProperties, int $level): string
+    private function _initializeSwaggerSchema(bool $onlyProperties, int $level): string
     {
         return $onlyProperties ? '' :
             $this->prettyPrint(" @OA\Schema( schema='{$this->name}',", $level, addPrefix: true);
     }
 
-    private function getRequiredProperties(): array
+    private function _getRequiredProperties(): array
     {
         return $this->properties->filter->required->pluck('name')->toArray();
     }
 
-    private function generatePropertiesSchema(bool $cascade, int $level): string
+    private function _generatePropertiesSchema(bool $cascade, int $level): string
     {
         return $this->properties->map(function (Property $property) use ($cascade, $level) {
             return $property->toSwagger($cascade, $level + 1);
         })->implode('');
     }
 
-    private function addRequiredPropertiesIfNeeded(array $required, int $level): string
+    private function _addRequiredPropertiesIfNeeded(array $required, int $level): string
     {
         if ($this->isRequest && !empty($required)) {
             return $this->prettyPrint(
@@ -122,7 +122,7 @@ class Schema implements PrintsSwagger
         return '';
     }
 
-    private function formatSwaggerSchema(string $swaggerSchema): string
+    private function _formatSwaggerSchema(string $swaggerSchema): string
     {
         return str_replace(["'", ExampleGenerator::SINGLE_QUOTE_IDENTIFIER], ['"', "'"], $swaggerSchema);
     }
@@ -135,27 +135,29 @@ class Schema implements PrintsSwagger
     {
         $reflection = new ReflectionClass($className);
         $properties = $reflection->getProperties(ReflectionProperty::IS_PUBLIC);
-        
+
         foreach ($properties as $property) {
-            $propertyMeta = $this->getPropertyMetadata($property);
-            
+            $propertyMeta = $this->_getPropertyMetadata($property);
+
             if ($propertyMeta->shouldOmit) {
                 continue;
             }
 
-            $this->processProperty($propertyMeta);
+            $this->_processProperty($propertyMeta);
         }
     }
 
-    private function getPropertyMetadata(ReflectionProperty $property): object
+    private function _getPropertyMetadata(ReflectionProperty $property): object
     {
         $type = $this->_getPropertyType($property);
         $attributeMeta = $this->_toAttributeMeta($property->getAttributes());
-        
+
+        $typeName = $type->getName();
+
         return (object) [
             'name' => $property->getName(),
             'type' => $type,
-            'typeName' => $type->getName(),
+            'typeName' => $typeName === 'Illuminate\Support\Collection' ? 'array' : $typeName, // We represent collections as arrays
             'typeClassName' => array_reverse(explode('\\', $type->getName()))[0],
             'attributeMeta' => $attributeMeta,
             'example' => $attributeMeta->example->value ?? null,
@@ -164,19 +166,19 @@ class Schema implements PrintsSwagger
         ];
     }
 
-    private function processProperty(object $propertyMeta): void
+    private function _processProperty(object $propertyMeta): void
     {
-        $content = $this->generatePropertyContent($propertyMeta);
-        $typeName = $this->determinePropertyType($propertyMeta);
-        $subSchema = $this->getSubSchema($propertyMeta);
-        $enumValues = $this->getEnumValues($propertyMeta);
-        
-        $newSchema = $this->handleSpecialCases($propertyMeta, $typeName, $content, $subSchema);
-        
-        $this->addPropertyToSchema($propertyMeta, $typeName, $content, $subSchema, $enumValues, $newSchema);
+        $content = $this->_generatePropertyContent($propertyMeta);
+        $typeName = $this->_determinePropertyType($propertyMeta);
+        $subSchema = $this->_getSubSchema($propertyMeta);
+        $enumValues = $this->_getEnumValues($propertyMeta);
+
+        $newSchema = $this->_handleSpecialCases($propertyMeta, $typeName, $content, $subSchema);
+
+        $this->_addPropertyToSchema($propertyMeta, $typeName, $content, $subSchema, $enumValues, $newSchema);
     }
 
-    private function generatePropertyContent(object $propertyMeta)
+    private function _generatePropertyContent(object $propertyMeta)
     {
         $example = $propertyMeta->example;
         $arguments = $propertyMeta->arguments;
@@ -201,19 +203,23 @@ class Schema implements PrintsSwagger
         return $content;
     }
 
-    private function determinePropertyType(object $propertyMeta): string
+    private function _determinePropertyType(object $propertyMeta): string
     {
         $typeName = $propertyMeta->typeName;
 
         // We represent collections as arrays
-        if($propertyMeta->typeClassName === 'Collection') {
+        if ($propertyMeta->typeClassName === 'Collection') {
             $typeName = 'array';
+        }
+
+        if (enum_exists($typeName)) {
+            $typeName = 'enum';
         }
 
         return $typeName;
     }
 
-    private function getSubSchema(object $propertyMeta): ?string
+    private function _getSubSchema(object $propertyMeta): ?string
     {
         $typeName = $propertyMeta->typeName;
         $type = $propertyMeta->type;
@@ -225,7 +231,7 @@ class Schema implements PrintsSwagger
         return null;
     }
 
-    private function getEnumValues(object $propertyMeta): array
+    private function _getEnumValues(object $propertyMeta): array
     {
         $typeName = $propertyMeta->typeName;
 
@@ -236,7 +242,7 @@ class Schema implements PrintsSwagger
         return [];
     }
 
-    private function handleSpecialCases(object $propertyMeta, string &$typeName, &$content, ?string $subSchema): ?Schema
+    private function _handleSpecialCases(object $propertyMeta, string &$typeName, &$content, ?string &$subSchema): ?Schema
     {
         $attributeMeta = $propertyMeta->attributeMeta;
 
@@ -251,7 +257,8 @@ class Schema implements PrintsSwagger
                     required: !$propertyMeta->type?->allowsNull(),
                     prettify: $this->prettify,
                     enum: []
-                ));
+                )
+            );
 
             $content = $newSchema;
             return $newSchema;
@@ -268,13 +275,14 @@ class Schema implements PrintsSwagger
                     required: !$propertyMeta->type?->allowsNull(),
                     prettify: $this->prettify,
                     enum: []
-                ));
+                )
+            );
 
             $content = $newSchema;
             return $newSchema;
         }
 
-        if ($typeName === 'object' && property_exists($attributeMeta, 'collectionOf')) {
+        if (str_contains($typeName, 'DataCollection') && property_exists($attributeMeta, 'collectionOf')) {
             $typeName = 'array';
             $subSchema = $attributeMeta->collectionOf->value;
             throw_if(
@@ -287,7 +295,7 @@ class Schema implements PrintsSwagger
         return null;
     }
 
-    private function addPropertyToSchema(object $propertyMeta, string $typeName, $content, ?string $subSchema, array $enumValues, ?Schema $newSchema): void
+    private function _addPropertyToSchema(object $propertyMeta, string $typeName, $content, ?string $subSchema, array $enumValues, ?Schema $newSchema): void
     {
         $this->addProperty(
             new Property(
@@ -313,7 +321,7 @@ class Schema implements PrintsSwagger
                 $content = $attribute->class;
             } elseif ($attribute instanceof SwaggerAttribute) {
                 $attributeName = $attribute->getName();
-                $content = property_exists($attribute,'content') ? $attribute->content : null;
+                $content = property_exists($attribute, 'content') ? $attribute->content : null;
             } else {
                 continue;
             }
@@ -325,7 +333,7 @@ class Schema implements PrintsSwagger
         return $attributeValues;
     }
 
-    private function _getPropertyType(ReflectionProperty $property): ReflectionType
+    private function  _getPropertyType(ReflectionProperty $property): ReflectionType
     {
         $type = $property->getType();
         if (method_exists($type, 'getTypes')) {

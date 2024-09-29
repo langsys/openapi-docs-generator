@@ -18,4 +18,5 @@ test('SwaggerSchemaGenerator generates annotations for test Data objects', funct
 
     $generator = new SwaggerSchemaGenerator($testDataPath, $testOutputPath, $namespace);
     $generator->swaggerAnnotationsFromDataObjects();
+    expect(file_get_contents($testOutputPath))->toBe(file_get_contents($packageRoot . '/tests/Output/ExpectedSchemas.php'));
 });

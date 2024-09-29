@@ -18,8 +18,7 @@ class SwaggerSchemaGenerator
         string $sourcePath,
         string $destinationFile,
         private string|null $_namespace = null
-    )
-    {
+    ) {
         $this->finder = new Finder();
         $this->exampleGenerator = new ExampleGenerator();
         $this->_sourcePath = $sourcePath ?? app_path();
@@ -33,13 +32,13 @@ class SwaggerSchemaGenerator
 
         $fileExists = file_exists($this->_destinationFile);
 
-        if($fileExists) {
+        if ($fileExists) {
             $previousContent = file_get_contents($this->_destinationFile);
         }
         try {
             $directory = dirname($this->_destinationFile);
 
-            if(!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+            if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
                 throw new \RuntimeException(sprintf('Directory "%s" was not created', $directory));
             }
             //Delete the file content
@@ -61,17 +60,16 @@ class SwaggerSchemaGenerator
 
                 foreach ($schemas as $schema) {
                     $saved = file_put_contents(
-                            $this->_destinationFile,
-                            $schema->toSwagger(cascade: $cascade),
-                            FILE_APPEND
-                        ) !== false;
+                        $this->_destinationFile,
+                        $schema->toSwagger(cascade: $cascade),
+                        FILE_APPEND
+                    ) !== false;
                     $generatedSchemas += (int)$saved;
                 }
             }
             file_put_contents($this->_destinationFile, ' */ ' . PHP_EOL . ' class Schemas {}', FILE_APPEND);
-
-        } catch(\Throwable $e) {
-            if($fileExists) {
+        } catch (\Throwable $e) {
+            if ($fileExists) {
                 file_put_contents($this->_destinationFile, '');
                 file_put_contents($this->_destinationFile, $previousContent);
             }
