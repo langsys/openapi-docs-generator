@@ -15,8 +15,8 @@ class SwaggerSchemaGenerator
     private $_sourcePath;
     private $_destinationFile;
     public function __construct(
-        string $sourcePath,
-        string $destinationFile,
+        string $sourcePath = null,
+        string $destinationFile = null,
         private string|null $_namespace = null
     ) {
         $this->finder = new Finder();

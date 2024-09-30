@@ -12,7 +12,7 @@ class GenerateDataSwagger extends Command
      *
      * @var string
      */
-    protected $signature = 'data-swagger:generate {--cascade} {--docs} {--pretty} {--ts}';
+    protected $signature = 'data-swagger:generate {--cascade} {--docs} {--minified} {--ts}';
 
     /**
      * The console command description.
@@ -30,7 +30,7 @@ class GenerateDataSwagger extends Command
     {
         $cascade = $this->option('cascade');
         $docs = $this->option('docs');
-        $pretty = $this->option('pretty');
+        $pretty = !$this->option('minified');
         $ts = $this->option('ts');
         $generator = new SwaggerSchemaGenerator();
         $generatedSchemas = $generator->swaggerAnnotationsFromDataObjects($cascade, $pretty);

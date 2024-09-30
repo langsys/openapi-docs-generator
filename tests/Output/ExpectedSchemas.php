@@ -13,6 +13,9 @@
 *		type="array",
 *		@OA\Items(type="string", example="array"),
 *	),
+*	@OA\Property(property="default_string",type="string",default="defaultString",example="A String",),
+*	@OA\Property(property="default_int",type="int",default=3,example=0,),
+*	@OA\Property(property="default_bool",type="bool",default=true,example=true,),
 * ),
 *
  */ 

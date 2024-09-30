@@ -153,6 +153,7 @@ class Schema implements PrintsSwagger
         $attributeMeta = $this->_toAttributeMeta($property->getAttributes());
 
         $typeName = $type->getName();
+        $defaultValue = $this->_getPropertyDefaultValue($property);
 
         return (object) [
             'name' => $property->getName(),
@@ -163,7 +164,26 @@ class Schema implements PrintsSwagger
             'example' => $attributeMeta->example->value ?? null,
             'arguments' => $attributeMeta->example->arguments ?? [],
             'shouldOmit' => property_exists($attributeMeta, 'omit'),
+            'defaultValue' => $defaultValue,
         ];
+    }
+
+    private function _getPropertyDefaultValue(ReflectionProperty $property): mixed
+    {
+        $class = $property->getDeclaringClass();
+        $constructor = $class->getConstructor();
+
+        if (!$constructor) {
+            return null;
+        }
+
+        foreach ($constructor->getParameters() as $parameter) {
+            if ($parameter->getName() === $property->getName() && $parameter->isDefaultValueAvailable()) {
+                return $parameter->getDefaultValue();
+            }
+        }
+
+        return null;
     }
 
     private function _processProperty(object $propertyMeta): void
@@ -305,7 +325,8 @@ class Schema implements PrintsSwagger
                 type: $typeName,
                 required: !$propertyMeta->type?->allowsNull(),
                 prettify: $this->prettify,
-                enum: $enumValues
+                enum: $enumValues,
+                default: $propertyMeta->defaultValue
             )
         );
     }

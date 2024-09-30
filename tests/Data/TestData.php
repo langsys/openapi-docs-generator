@@ -21,6 +21,9 @@ class TestData extends Data
         public Collection $collection,
         #[Example('array')]
         public array $array,
-
+        #[Example('A String')]
+        public string $default_string = 'defaultString',
+        public int $default_int = 3,
+        public bool $default_bool = true,
     ) {}
 }
