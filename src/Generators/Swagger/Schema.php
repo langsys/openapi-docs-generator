@@ -8,6 +8,7 @@ use Exception;
 use Illuminate\Support\Collection;
 use ReflectionClass;
 use ReflectionProperty;
+use ReflectionNamedType;
 use ReflectionType;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
 
@@ -177,13 +178,30 @@ class Schema implements PrintsSwagger
             return null;
         }
 
+        // Loop through constructor parameters to find a match with the property
         foreach ($constructor->getParameters() as $parameter) {
             if ($parameter->getName() === $property->getName() && $parameter->isDefaultValueAvailable()) {
-                return $parameter->getDefaultValue();
+                $defaultValue = $parameter->getDefaultValue();
+                return $this->handleEnumDefault($defaultValue, $parameter->getType());
             }
         }
 
+        // If no default value is found in the constructor, check if the property itself has a default value
+        if ($property->hasDefaultValue()) {
+            $defaultValue = $property->getDefaultValue();
+            return $this->handleEnumDefault($defaultValue, $property->getType());
+        }
+
         return null;
+    }
+
+    private function handleEnumDefault($defaultValue, ?ReflectionType $type): mixed
+    {
+        if ($type instanceof ReflectionNamedType && enum_exists($type->getName())) {
+            // If the default value is an enum case, return its value
+            return $defaultValue->value;
+        }
+        return $defaultValue;
     }
 
     private function _processProperty(object $propertyMeta): void

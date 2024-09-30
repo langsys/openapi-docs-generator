@@ -25,5 +25,7 @@ class TestData extends Data
         public string $default_string = 'defaultString',
         public int $default_int = 3,
         public bool $default_bool = true,
+        #[Example('case2')]
+        public ExampleEnum $enum = ExampleEnum::CASE_1
     ) {}
 }

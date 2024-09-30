@@ -16,6 +16,7 @@
 *	@OA\Property(property="default_string",type="string",default="defaultString",example="A String",),
 *	@OA\Property(property="default_int",type="int",default=3,example=0,),
 *	@OA\Property(property="default_bool",type="bool",default=true,example=true,),
+*	@OA\Property(property="enum",type="enum",default="case1",enum={"case1", "case2"}, example= "case1",),
 * ),
 *
  */ 

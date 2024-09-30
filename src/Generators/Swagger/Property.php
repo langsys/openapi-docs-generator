@@ -74,7 +74,7 @@ class Property implements PrintsSwagger
                 $nonPrimitiveProperty
             );
         }
-        if ($this->default !== null && in_array($this->type, ['string', 'int', 'bool'])) {
+        if ($this->default !== null && in_array($this->type, ['string', 'int', 'bool', 'enum'])) {
             $defaultValue = $this->formatDefaultValue();
             $result .= $this->prettyPrint(
                 "default=$defaultValue,",
@@ -88,7 +88,7 @@ class Property implements PrintsSwagger
 
     private function formatDefaultValue(): string
     {
-        if ($this->type === 'string') {
+        if ($this->type === 'string' || $this->type === 'enum') {
             return "\"$this->default\"";
         } elseif ($this->type === 'bool') {
             return $this->default ? 'true' : 'false';
