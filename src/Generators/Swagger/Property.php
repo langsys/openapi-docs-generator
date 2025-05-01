@@ -123,11 +123,8 @@ class Property implements PrintsSwagger
 
     private function handleEnumType(int $level, int $newLines, bool $nonPrimitiveProperty): string
     {
-        $randomKey = array_rand($this->enum);
-        $exampleValue = $this->enum[$randomKey];
-        $enumValues = implode(', ', array_map(function ($value) {
-            return is_string($value) ? "'$value'" : $value;
-        }, $this->enum));
+        $exampleValue = in_array($this->content, $this->enum) ? $this->content : $this->enum[array_rand($this->enum)];
+        $enumValues = implode(', ', array_map(fn ($value) => is_string($value) ? "'$value'" : $value, $this->enum));
         $enumValues = "{" . $enumValues . "}";
         return $this->prettyPrint(
             "enum={$enumValues}, example= '$exampleValue',",
