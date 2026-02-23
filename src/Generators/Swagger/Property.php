@@ -17,20 +17,23 @@ class Property implements PrintsSwagger
         public bool $required = false,
         protected $prettify = true, //
         public array $enum = [],
-        public ?string $default = null
+        public ?string $default = null,
+        public ?string $dictionaryKey = null
     ) {}
 
     public function toSwagger(bool $cascade = false, int $level = 0): string
     {
         $contentIsSchema = $this->content instanceof Schema;
-        $nonPrimitiveProperty = $contentIsSchema || $this->type === 'array';
+        $nonPrimitiveProperty = $contentIsSchema || $this->type === 'array' || $this->dictionaryKey !== null;
         $newLines = (int)$nonPrimitiveProperty;
         $attributeLevel = $nonPrimitiveProperty ? $level + 1 : $level;
 
         $swaggerProperty = $this->prettyPrint('@OA\Property(', $level, $newLines, addPrefix: true);
         $swaggerProperty .= $this->addBasicAttributes($attributeLevel, $newLines, $nonPrimitiveProperty);
 
-        if ($this->type === 'array') {
+        if ($this->dictionaryKey !== null) {
+            $swaggerProperty .= $this->handleDictionaryType($attributeLevel, $newLines, $nonPrimitiveProperty, $contentIsSchema, $cascade);
+        } elseif ($this->type === 'array') {
             $swaggerProperty .= $this->handleArrayType($attributeLevel, $newLines, $nonPrimitiveProperty, $contentIsSchema, $cascade);
         } elseif ($contentIsSchema) {
             $swaggerProperty .= $this->content->toSwagger(true, $cascade, $attributeLevel);
@@ -119,6 +122,41 @@ class Property implements PrintsSwagger
             $contentIsSchema
         );
         return $result;
+    }
+
+    private function handleDictionaryType(int $level, int $newLines, bool $nonPrimitiveProperty, bool $contentIsSchema, bool $cascade): string
+    {
+        if ($contentIsSchema) {
+            // Object dictionary: nested @OA\Property with the dictionary key pointing to the schema
+            $result = $this->prettyPrint(
+                "@OA\Property(",
+                $level,
+                1,
+                $nonPrimitiveProperty
+            );
+            $result .= $this->prettyPrint(
+                "property='{$this->dictionaryKey}',",
+                $level + 1,
+                1,
+                true
+            );
+            $result .= $this->content->toSwagger(true, $cascade, $level + 1);
+            $result .= $this->prettyPrint(
+                "),",
+                $level,
+                $newLines,
+                true
+            );
+            return $result;
+        }
+
+        // Simple dictionary: just the example showing key-value structure
+        return $this->prettyPrint(
+            "example={'{$this->dictionaryKey}': '{$this->content}'},",
+            $level,
+            $newLines,
+            $nonPrimitiveProperty
+        );
     }
 
     private function handleEnumType(int $level, int $newLines, bool $nonPrimitiveProperty): string

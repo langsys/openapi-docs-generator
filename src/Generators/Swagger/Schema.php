@@ -24,8 +24,7 @@ class Schema implements PrintsSwagger
     public function __construct(
         public string $name,
         public bool $prettify = true,
-        protected bool $fromClass = true,
-        protected bool $virutalSchema = false
+        protected bool $fromClass = true
     ) {
         $this->name = class_basename($name);
         // Identifies resource and also removes it from schema name to avoid too long names
@@ -77,7 +76,7 @@ class Schema implements PrintsSwagger
 
     private function _shouldPrintSchemaReference(bool $onlyProperties, bool $cascade): bool
     {
-        return $onlyProperties && !$cascade && !$this->virutalSchema;
+        return $onlyProperties && !$cascade;
     }
 
     private function _printSchemaReference(int $level): string
@@ -211,9 +210,9 @@ class Schema implements PrintsSwagger
         $subSchema = $this->_getSubSchema($propertyMeta);
         $enumValues = $this->_getEnumValues($propertyMeta);
 
-        $newSchema = $this->_handleSpecialCases($propertyMeta, $typeName, $content, $subSchema);
+        $this->_handleSpecialCases($propertyMeta, $typeName, $subSchema);
 
-        $this->_addPropertyToSchema($propertyMeta, $typeName, $content, $subSchema, $enumValues, $newSchema);
+        $this->_addPropertyToSchema($propertyMeta, $typeName, $content, $subSchema, $enumValues);
     }
 
     private function _generatePropertyContent(object $propertyMeta)
@@ -280,46 +279,11 @@ class Schema implements PrintsSwagger
         return [];
     }
 
-    private function _handleSpecialCases(object $propertyMeta, string &$typeName, &$content, ?string &$subSchema): ?Schema
+    private function _handleSpecialCases(object $propertyMeta, string &$typeName, ?string &$subSchema): void
     {
         $attributeMeta = $propertyMeta->attributeMeta;
 
-        if ($typeName === 'array' && property_exists($attributeMeta, 'groupedcollection')) {
-            $newSchema = new Schema("{$propertyMeta->name}GroupedCollection", $this->prettify, false, true);
-            $newSchema->addProperty(
-                new Property(
-                    name: $attributeMeta->groupedcollection->value,
-                    description: '',
-                    content: $content,
-                    type: $typeName,
-                    required: !$propertyMeta->type?->allowsNull(),
-                    prettify: $this->prettify,
-                    enum: []
-                )
-            );
-
-            $content = $newSchema;
-            return $newSchema;
-        }
-
-        if ($typeName === 'object' && property_exists($attributeMeta, 'groupedcollection')) {
-            $newSchema = new Schema("{$propertyMeta->name}GroupedCollection", $this->prettify, false, true);
-            $newSchema->addProperty(
-                new Property(
-                    name: $attributeMeta->groupedcollection->value,
-                    description: '',
-                    content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
-                    type: $typeName,
-                    required: !$propertyMeta->type?->allowsNull(),
-                    prettify: $this->prettify,
-                    enum: []
-                )
-            );
-
-            $content = $newSchema;
-            return $newSchema;
-        }
-
+        // DataCollectionOf must be processed BEFORE GroupedCollection so subSchema is available
         if (str_contains($typeName, 'DataCollection') && property_exists($attributeMeta, 'collectionOf')) {
             $typeName = 'array';
             $subSchema = $attributeMeta->collectionOf->value;
@@ -330,21 +294,25 @@ class Schema implements PrintsSwagger
             );
         }
 
-        return null;
+        if (property_exists($attributeMeta, 'groupedcollection') && ($typeName === 'array' || $subSchema !== null)) {
+            $propertyMeta->dictionaryKey = $attributeMeta->groupedcollection->value;
+            $typeName = 'object';
+        }
     }
 
-    private function _addPropertyToSchema(object $propertyMeta, string $typeName, $content, ?string $subSchema, array $enumValues, ?Schema $newSchema): void
+    private function _addPropertyToSchema(object $propertyMeta, string $typeName, $content, ?string $subSchema, array $enumValues): void
     {
         $this->addProperty(
             new Property(
                 name: $propertyMeta->name,
                 description: $propertyMeta->attributeMeta->description->value ?? '',
-                content: $newSchema ?? ($subSchema ? new Schema($subSchema, $this->prettify) : $content),
+                content: $subSchema ? new Schema($subSchema, $this->prettify) : $content,
                 type: $typeName,
                 required: !$propertyMeta->type?->allowsNull(),
                 prettify: $this->prettify,
                 enum: $enumValues,
-                default: $propertyMeta->defaultValue
+                default: $propertyMeta->defaultValue,
+                dictionaryKey: $propertyMeta->dictionaryKey ?? null
             )
         );
     }

@@ -21,6 +21,12 @@ class TestData extends Data
         public Collection $collection,
         #[Example('array')]
         public array $array,
+        #[GroupedCollection("es")]
+        #[Example("es-cr")]
+        public array $grouped_array,
+        #[GroupedCollection("es-cr")]
+        #[DataCollectionOf(ExampleData::class)]
+        public DataCollection $grouped_collection,
         #[Example('A String')]
         public string $default_string = 'defaultString',
         public int $default_int = 3,
