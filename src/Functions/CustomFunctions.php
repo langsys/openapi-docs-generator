@@ -1,6 +1,6 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Functions;
+namespace Langsys\OpenApiDocsGenerator\Functions;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;

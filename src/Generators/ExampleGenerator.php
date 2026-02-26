@@ -1,6 +1,6 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Generators\Swagger;
+namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use Illuminate\Support\Str;
 
@@ -10,15 +10,17 @@ class ExampleGenerator
     const FAKER_FUNCTION_PREFIX = ':';
     const SINGLE_QUOTE_IDENTIFIER = '#[SINGLE_QUOTE]';
 
-    // Variable will only need to contain any of these keys so the function is called
-
     private $faker;
-    private $customFunctions;
+    private array $fakerAttributeMapper;
+    private array $customFunctions;
 
-    public function __construct()
-    {
+    public function __construct(
+        array $fakerAttributeMapper = [],
+        array $customFunctions = [],
+    ) {
         $this->faker = fake();
-        $this->customFunctions = config('langsys-generator.custom_functions');
+        $this->fakerAttributeMapper = $fakerAttributeMapper;
+        $this->customFunctions = $customFunctions;
     }
 
 
@@ -57,9 +59,7 @@ class ExampleGenerator
         }
 
         // Check the attribute mapping for default or extended configurations
-        $mapping = config('langsys-generator.faker_attribute_mapper');
-
-        foreach ($mapping as $hint => $function) {
+        foreach ($this->fakerAttributeMapper as $hint => $function) {
             if (str_contains($name, $hint)) {
                 return $function;
             }
@@ -72,9 +72,8 @@ class ExampleGenerator
     private function isCustomFunction($function): bool
     {
         //Is array and exists in the config file,
-        return is_array($function) && count($function) === 2 && array_key_exists($function[1], config('langsys-generator.custom_functions'));
+        return is_array($function) && count($function) === 2 && array_key_exists($function[1], $this->customFunctions);
     }
 
 
 }
-

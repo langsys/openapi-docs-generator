@@ -1,11 +1,11 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Tests\Data;
+namespace Langsys\OpenApiDocsGenerator\Tests\Data;
 
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes\GroupedCollection;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\GroupedCollection;
 use Spatie\LaravelData\Data;
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes\Description;
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes\Example;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
 use Spatie\LaravelData\DataCollection;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
 use Illuminate\Support\Collection;

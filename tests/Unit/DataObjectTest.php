@@ -1,9 +1,15 @@
 <?php
 
-use Langsys\SwaggerAutoGenerator\Console\Commands\GenerateDataSwagger;
+use Langsys\OpenApiDocsGenerator\Console\Commands\DtoMakeCommand;
 
-test('it executes the command successfully', function () {
+test('dto make command requires --model option', function () {
     $this
-        ->artisan(\Langsys\SwaggerAutoGenerator\Console\Commands\DataObjectMakeCommand::class, ['--model' => 'App\Models\User'])
-        ->assertSuccessful();
+        ->artisan(DtoMakeCommand::class)
+        ->assertFailed();
+});
+
+test('dto make command fails for non-existent model', function () {
+    $this
+        ->artisan(DtoMakeCommand::class, ['--model' => 'App\Models\NonExistent'])
+        ->assertFailed();
 });

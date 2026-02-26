@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Langsys\SwaggerAutoGenerator\Tests;
+namespace Langsys\OpenApiDocsGenerator\Tests;
 
-use Langsys\SwaggerAutoGenerator\SwaggerAutoGeneratorServiceProvider;
+use Langsys\OpenApiDocsGenerator\OpenApiDocsServiceProvider;
 use Orchestra\Testbench\TestCase;
 
 class LangsysDataSwaggerTest extends TestCase
@@ -12,7 +12,7 @@ class LangsysDataSwaggerTest extends TestCase
     protected function getPackageProviders($app): array
     {
         return [
-            SwaggerAutoGeneratorServiceProvider::class,
+            OpenApiDocsServiceProvider::class,
         ];
     }
 }

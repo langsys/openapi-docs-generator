@@ -1,6 +1,6 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Tests\Data;
+namespace Langsys\OpenApiDocsGenerator\Tests\Data;
 
 enum ExampleEnum: string
 {

@@ -2,6 +2,6 @@
 
 declare(strict_types=1);
 
-use Langsys\SwaggerAutoGenerator\Tests\LangsysDataSwaggerTest;
+use Langsys\OpenApiDocsGenerator\Tests\LangsysDataSwaggerTest;
 
 uses(LangsysDataSwaggerTest::class)->in(__DIR__);

@@ -1,9 +1,9 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Tests\Data;
+namespace Langsys\OpenApiDocsGenerator\Tests\Data;
 
 use Spatie\LaravelData\Data;
-use Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes\Example;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
 
 class ExampleData extends Data
 {

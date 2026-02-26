@@ -1,10 +1,10 @@
 <?php
 
-namespace Langsys\SwaggerAutoGenerator\Generators\Swagger\Attributes;
+namespace Langsys\OpenApiDocsGenerator\Generators\Attributes;
 
 use Attribute;
 
-class SwaggerAttribute
+class OpenApiAttribute
 {
     public function getName()
     {

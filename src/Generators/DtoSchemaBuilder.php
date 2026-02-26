@@ -1,0 +1,680 @@
+<?php
+
+namespace Langsys\OpenApiDocsGenerator\Generators;
+
+use Exception;
+use Illuminate\Support\Collection;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\GroupedCollection;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Omit;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\OpenApiAttribute;
+use OpenApi\Annotations as OA;
+use OpenApi\Generator as OpenApiGenerator;
+use ReflectionClass;
+use ReflectionNamedType;
+use ReflectionProperty;
+use ReflectionType;
+use Spatie\LaravelData\Attributes\DataCollectionOf;
+use Symfony\Component\Finder\Finder;
+
+class DtoSchemaBuilder
+{
+    public function __construct(
+        private string $dtoPath,
+        private string $namespace,
+        private ExampleGenerator $exampleGenerator,
+        private array $paginationFields,
+    ) {
+    }
+
+    /**
+     * Scan the DTO directory and build all Schema objects.
+     *
+     * @return OA\Schema[]
+     */
+    public function buildAll(): array
+    {
+        $schemas = [];
+
+        foreach ($this->discoverDtoClasses() as $className) {
+            $schema = $this->buildSchema($className);
+            if ($schema) {
+                $schemas[] = $schema;
+
+                if ($this->isResource($className)) {
+                    $schemas = array_merge($schemas, $this->buildResponseSchemas($className, $schema));
+                }
+            }
+        }
+
+        return $schemas;
+    }
+
+    /**
+     * Build a single OA\Schema from a DTO class via reflection.
+     */
+    public function buildSchema(string $className): ?OA\Schema
+    {
+        $reflection = new ReflectionClass($className);
+        $properties = [];
+        $required = [];
+
+        $isRequest = str_contains($className, 'Request');
+
+        foreach ($this->getClassProperties($reflection) as $prop) {
+            $meta = $this->extractPropertyMetadata($prop);
+            if ($meta->omit) {
+                continue;
+            }
+
+            $oaProperty = $this->buildProperty($meta);
+            $properties[] = $oaProperty;
+
+            if ($meta->required) {
+                $required[] = $meta->name;
+            }
+        }
+
+        if (empty($properties)) {
+            return null;
+        }
+
+        $schemaName = $this->resolveSchemaName($className);
+
+        $schemaProps = [
+            'schema' => $schemaName,
+            'properties' => $properties,
+        ];
+
+        // Only include required for request schemas (matching v1 behavior)
+        if ($isRequest && !empty($required)) {
+            $schemaProps['required'] = $required;
+        }
+
+        return new OA\Schema($schemaProps);
+    }
+
+    // -------------------------------------------------------------------------
+    // Discovery
+    // -------------------------------------------------------------------------
+
+    /**
+     * Scan the DTO directory and return fully qualified class names of Data subclasses.
+     *
+     * @return string[]
+     */
+    private function discoverDtoClasses(): array
+    {
+        $classes = [];
+        $finder = new Finder();
+
+        foreach ($finder->files()->name('*.php')->in($this->dtoPath) as $file) {
+            $relativePath = str_replace('.php', '', $file->getRelativePathname());
+            $className = $this->namespace . '\\' . str_replace('/', '\\', $relativePath);
+
+            if ($this->isDataSubclass($className)) {
+                $classes[] = $className;
+            }
+        }
+
+        return $classes;
+    }
+
+    /**
+     * Determine whether a class extends Spatie\LaravelData\Data (directly or indirectly).
+     */
+    private function isDataSubclass(string $className): bool
+    {
+        try {
+            $reflection = new ReflectionClass($className);
+            $parent = $reflection->getParentClass();
+
+            if (!$parent) {
+                return false;
+            }
+
+            return $parent->getName() === 'Spatie\\LaravelData\\Data'
+                || $this->isDataSubclass($parent->getName());
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Property Reflection
+    // -------------------------------------------------------------------------
+
+    /**
+     * Get the public properties of a class that should be reflected on.
+     *
+     * @return ReflectionProperty[]
+     */
+    private function getClassProperties(ReflectionClass $reflection): array
+    {
+        return $reflection->getProperties(ReflectionProperty::IS_PUBLIC);
+    }
+
+    /**
+     * Extract metadata from a single reflected property.
+     */
+    private function extractPropertyMetadata(ReflectionProperty $property): object
+    {
+        $type = $this->resolvePropertyType($property);
+        $attributes = $this->parseAttributes($property->getAttributes());
+
+        $typeName = $type->getName();
+        // Normalize Illuminate\Support\Collection to array
+        if ($typeName === 'Illuminate\\Support\\Collection') {
+            $typeName = 'array';
+        }
+
+        $typeShortName = array_reverse(explode('\\', $type->getName()))[0];
+        if ($typeShortName === 'Collection') {
+            $typeShortName = 'array';
+        }
+
+        $defaultValue = $this->resolveDefaultValue($property);
+
+        return (object) [
+            'name' => $property->getName(),
+            'type' => $type,
+            'typeName' => $typeName,
+            'typeShortName' => $typeShortName,
+            'omit' => $attributes->omit,
+            'example' => $attributes->example,
+            'exampleArguments' => $attributes->exampleArguments,
+            'description' => $attributes->description,
+            'collectionOf' => $attributes->collectionOf,
+            'groupedCollection' => $attributes->groupedCollection,
+            'defaultValue' => $defaultValue,
+            'required' => !$type->allowsNull(),
+        ];
+    }
+
+    /**
+     * Resolve the effective ReflectionType for a property, unwrapping union types.
+     */
+    private function resolvePropertyType(ReflectionProperty $property): ReflectionType
+    {
+        $type = $property->getType();
+        if (method_exists($type, 'getTypes')) {
+            [$type] = $type->getTypes();
+        }
+
+        return $type;
+    }
+
+    /**
+     * Parse PHP attributes into a structured object with known attribute values.
+     */
+    private function parseAttributes(array $reflectionAttributes): object
+    {
+        $result = (object) [
+            'omit' => false,
+            'example' => null,
+            'exampleArguments' => [],
+            'description' => '',
+            'collectionOf' => null,
+            'groupedCollection' => null,
+        ];
+
+        foreach ($reflectionAttributes as $attr) {
+            $instance = $attr->newInstance();
+
+            if ($instance instanceof Omit) {
+                $result->omit = true;
+            } elseif ($instance instanceof Example) {
+                $result->example = $instance->content;
+                $result->exampleArguments = $instance->arguments;
+            } elseif ($instance instanceof Description) {
+                $result->description = $instance->content;
+            } elseif ($instance instanceof GroupedCollection) {
+                $result->groupedCollection = $instance->content;
+            } elseif ($instance instanceof DataCollectionOf) {
+                $result->collectionOf = $instance->class;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Resolve the default value for a property from constructor params or property declaration.
+     */
+    private function resolveDefaultValue(ReflectionProperty $property): mixed
+    {
+        $class = $property->getDeclaringClass();
+        $constructor = $class->getConstructor();
+
+        if ($constructor) {
+            foreach ($constructor->getParameters() as $parameter) {
+                if ($parameter->getName() === $property->getName() && $parameter->isDefaultValueAvailable()) {
+                    $defaultValue = $parameter->getDefaultValue();
+                    return $this->normalizeEnumDefault($defaultValue, $parameter->getType());
+                }
+            }
+        }
+
+        if ($property->hasDefaultValue()) {
+            $defaultValue = $property->getDefaultValue();
+            return $this->normalizeEnumDefault($defaultValue, $property->getType());
+        }
+
+        return null;
+    }
+
+    /**
+     * If the default value is a backed enum case, return its scalar value.
+     */
+    private function normalizeEnumDefault(mixed $defaultValue, ?ReflectionType $type): mixed
+    {
+        if ($type instanceof ReflectionNamedType && enum_exists($type->getName())) {
+            return $defaultValue->value;
+        }
+
+        return $defaultValue;
+    }
+
+    // -------------------------------------------------------------------------
+    // OA\Property Building
+    // -------------------------------------------------------------------------
+
+    /**
+     * Build a single OA\Property from extracted metadata.
+     */
+    private function buildProperty(object $meta): OA\Property
+    {
+        $typeName = $meta->typeName;
+        $type = $meta->type;
+
+        // Detect enum
+        if (enum_exists($typeName)) {
+            return $this->buildEnumProperty($meta);
+        }
+
+        // Detect DataCollection with #[DataCollectionOf]
+        if (str_contains($typeName, 'DataCollection') && $meta->collectionOf !== null) {
+            return $this->buildDataCollectionProperty($meta);
+        }
+
+        // Detect nested Data subclass (non-builtin, non-array, non-enum)
+        if ($typeName !== 'array' && !$type->isBuiltin() && !enum_exists($typeName)) {
+            return $this->buildNestedObjectProperty($meta);
+        }
+
+        // Detect grouped array (plain array with GroupedCollection attribute, no collectionOf)
+        if ($meta->groupedCollection !== null && $typeName === 'array') {
+            return $this->buildSimpleGroupedProperty($meta);
+        }
+
+        // Detect plain array
+        if ($typeName === 'array') {
+            return $this->buildArrayProperty($meta);
+        }
+
+        // Primitive types: string, int, bool, float
+        return $this->buildPrimitiveProperty($meta);
+    }
+
+    /**
+     * Build a property for an enum type.
+     */
+    private function buildEnumProperty(object $meta): OA\Property
+    {
+        $enumClass = $meta->typeName;
+        $cases = $enumClass::cases();
+        $enumValues = array_column($cases, 'value');
+
+        // Determine the underlying enum type (string or integer)
+        $backingType = 'string';
+        if (!empty($cases) && is_int($cases[0]->value)) {
+            $backingType = 'integer';
+        }
+
+        // Example: use explicit #[Example] if valid, otherwise pick random case
+        $example = $meta->example;
+        if ($example === null || !in_array($example, $enumValues)) {
+            $example = $enumValues[array_rand($enumValues)];
+        }
+
+        $props = [
+            'property' => $meta->name,
+            'type' => $backingType,
+            'enum' => $enumValues,
+            'example' => $example,
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        if ($meta->defaultValue !== null) {
+            $props['default'] = $meta->defaultValue;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for a DataCollection with #[DataCollectionOf].
+     * May also be a GroupedCollection if #[GroupedCollection] is present.
+     */
+    private function buildDataCollectionProperty(object $meta): OA\Property
+    {
+        $refClass = $meta->collectionOf;
+        $refSchemaName = class_basename($refClass);
+
+        // If grouped collection: type object with additionalProperties containing array of $ref items
+        if ($meta->groupedCollection !== null) {
+            return $this->buildGroupedCollectionProperty($meta, $refSchemaName);
+        }
+
+        // Plain DataCollection: type array with items.$ref
+        $props = [
+            'property' => $meta->name,
+            'type' => 'array',
+            'items' => new OA\Items([
+                'ref' => '#/components/schemas/' . $refSchemaName,
+            ]),
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for a grouped collection (dictionary/map of arrays of schema refs).
+     */
+    private function buildGroupedCollectionProperty(object $meta, string $refSchemaName): OA\Property
+    {
+        $props = [
+            'property' => $meta->name,
+            'type' => 'object',
+            'additionalProperties' => new OA\AdditionalProperties([
+                'type' => 'array',
+                'items' => new OA\Items([
+                    'ref' => '#/components/schemas/' . $refSchemaName,
+                ]),
+            ]),
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for a nested Data object (non-array, non-builtin, non-enum).
+     */
+    private function buildNestedObjectProperty(object $meta): OA\Property
+    {
+        $refSchemaName = class_basename($meta->typeName);
+
+        $props = [
+            'property' => $meta->name,
+            'ref' => '#/components/schemas/' . $refSchemaName,
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for a simple grouped array (array with GroupedCollection attribute, no DataCollectionOf).
+     * The v1 behavior was: type object with example { dictionaryKey: content }.
+     */
+    private function buildSimpleGroupedProperty(object $meta): OA\Property
+    {
+        $example = $this->generateExample($meta);
+
+        $props = [
+            'property' => $meta->name,
+            'type' => 'object',
+            'example' => [$meta->groupedCollection => $example],
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for a plain array type.
+     */
+    private function buildArrayProperty(object $meta): OA\Property
+    {
+        $example = $this->generateExample($meta);
+
+        $props = [
+            'property' => $meta->name,
+            'type' => 'array',
+            'items' => new OA\Items([
+                'type' => gettype($example) === 'integer' ? 'integer' : 'string',
+                'example' => $example,
+            ]),
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
+     * Build a property for primitive types (string, int, bool, float).
+     */
+    private function buildPrimitiveProperty(object $meta): OA\Property
+    {
+        $openApiType = $this->mapPhpTypeToOpenApi($meta->typeName);
+        $example = $this->generateExample($meta);
+
+        // For bool, default to true if example is empty
+        if ($openApiType === 'boolean' && ($example === '' || $example === null)) {
+            $example = is_bool($meta->example) ? $meta->example : true;
+        }
+
+        // For integer, cast
+        if ($openApiType === 'integer') {
+            $example = (int) $example;
+        }
+
+        $props = [
+            'property' => $meta->name,
+            'type' => $openApiType,
+            'example' => $example,
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        if ($meta->defaultValue !== null) {
+            $props['default'] = $meta->defaultValue;
+        }
+
+        return new OA\Property($props);
+    }
+
+    // -------------------------------------------------------------------------
+    // Example Generation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Generate an example value for a property using the ExampleGenerator.
+     */
+    private function generateExample(object $meta): mixed
+    {
+        $example = $meta->example;
+        $arguments = $meta->exampleArguments;
+
+        // If there is an explicit example that is not a faker function reference, use it directly
+        if ($example !== null && !str_starts_with((string) $example, ExampleGenerator::FAKER_FUNCTION_PREFIX)) {
+            return $example;
+        }
+
+        // Use ExampleGenerator (faker-based)
+        $exampleFunction = $example ?? $meta->name;
+        $exampleFunction = (string) $exampleFunction;
+        $arguments = [...$arguments, 'type' => $meta->typeName];
+
+        if (method_exists($this->exampleGenerator, $exampleFunction)) {
+            return $this->exampleGenerator->$exampleFunction(...array_values($arguments));
+        }
+
+        return $this->exampleGenerator->$exampleFunction($arguments);
+    }
+
+    // -------------------------------------------------------------------------
+    // Response Schema Generation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Check if a class name indicates a Resource DTO (name ends with "Resource").
+     */
+    private function isResource(string $className): bool
+    {
+        return str_ends_with(class_basename($className), 'Resource');
+    }
+
+    /**
+     * Resolve the schema name for a DTO class.
+     * For Resource classes, strip the "Resource" suffix.
+     */
+    private function resolveSchemaName(string $className): string
+    {
+        $baseName = class_basename($className);
+        if (str_contains($baseName, 'Resource')) {
+            return str_replace('Resource', '', $baseName);
+        }
+
+        return $baseName;
+    }
+
+    /**
+     * Build Response, PaginatedResponse, and ListResponse schemas for a Resource DTO.
+     *
+     * @return OA\Schema[]
+     */
+    private function buildResponseSchemas(string $className, OA\Schema $resourceSchema): array
+    {
+        $baseName = $this->resolveSchemaName($className);
+
+        return [
+            $this->buildSingleResponseSchema($baseName, $resourceSchema),
+            $this->buildPaginatedResponseSchema($baseName, $resourceSchema),
+            $this->buildListResponseSchema($baseName, $resourceSchema),
+        ];
+    }
+
+    /**
+     * Build {Name}Response schema: { status: bool, data: {Resource} }
+     */
+    private function buildSingleResponseSchema(string $baseName, OA\Schema $resourceSchema): OA\Schema
+    {
+        return new OA\Schema([
+            'schema' => $baseName . 'Response',
+            'properties' => [
+                new OA\Property([
+                    'property' => 'status',
+                    'type' => 'boolean',
+                    'description' => 'Response status',
+                    'example' => true,
+                ]),
+                new OA\Property([
+                    'property' => 'data',
+                    'description' => 'Response payload',
+                    'ref' => '#/components/schemas/' . $baseName,
+                ]),
+            ],
+        ]);
+    }
+
+    /**
+     * Build {Name}PaginatedResponse schema: { pagination fields..., data: [{Resource}] }
+     */
+    private function buildPaginatedResponseSchema(string $baseName, OA\Schema $resourceSchema): OA\Schema
+    {
+        $properties = [];
+
+        foreach ($this->paginationFields as $field) {
+            $fieldType = $this->mapPhpTypeToOpenApi($field['type'] ?? 'string');
+            $properties[] = new OA\Property([
+                'property' => $field['name'],
+                'type' => $fieldType,
+                'description' => $field['description'] ?? '',
+                'example' => $field['content'] ?? null,
+            ]);
+        }
+
+        // data: array of resource refs
+        $properties[] = new OA\Property([
+            'property' => 'data',
+            'type' => 'array',
+            'description' => 'List of items',
+            'items' => new OA\Items([
+                'ref' => '#/components/schemas/' . $baseName,
+            ]),
+        ]);
+
+        return new OA\Schema([
+            'schema' => $baseName . 'PaginatedResponse',
+            'properties' => $properties,
+        ]);
+    }
+
+    /**
+     * Build {Name}ListResponse schema: { status: bool, data: [{Resource}] }
+     */
+    private function buildListResponseSchema(string $baseName, OA\Schema $resourceSchema): OA\Schema
+    {
+        return new OA\Schema([
+            'schema' => $baseName . 'ListResponse',
+            'properties' => [
+                new OA\Property([
+                    'property' => 'status',
+                    'type' => 'boolean',
+                    'description' => 'Response status',
+                    'example' => true,
+                ]),
+                new OA\Property([
+                    'property' => 'data',
+                    'type' => 'array',
+                    'description' => 'List of items',
+                    'items' => new OA\Items([
+                        'ref' => '#/components/schemas/' . $baseName,
+                    ]),
+                ]),
+            ],
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Map a PHP type name to an OpenAPI type string.
+     */
+    private function mapPhpTypeToOpenApi(string $phpType): string
+    {
+        return match ($phpType) {
+            'int', 'integer' => 'integer',
+            'float', 'double' => 'number',
+            'bool', 'boolean' => 'boolean',
+            'array' => 'array',
+            default => 'string',
+        };
+    }
+}

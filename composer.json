@@ -1,47 +1,46 @@
 {
-    "name": "langsys/swagger-auto-generator",
-    "description": "Automatic Swagger and DTO Generator Docs Generator",
+    "name": "langsys/openapi-docs-generator",
+    "description": "Automatic OpenAPI documentation generator from Spatie Laravel Data DTOs",
     "type": "library",
     "license": "MIT",
     "require": {
-        "darkaonline/l5-swagger": "^8.4",
-        "spatie/laravel-data": "^3.9"
+        "php": "^8.1",
+        "zircote/swagger-php": "^4.0",
+        "spatie/laravel-data": "^3.9|^4.0",
+        "symfony/yaml": "^6.0|^7.0"
     },
     "authors": [
         {
           "role": "Developer",
           "name": "Humberto Cuadra",
           "email": "hcuadra@flexmarkintl.com"
-        },
-
-        {
-            "role": "Developer",
-            "name": "Jarliev",
-            "email": "jarliev2@gmail.com"
         }
     ],
     "minimum-stability": "dev",
     "autoload": {
         "psr-4": {
-            "Langsys\\SwaggerAutoGenerator\\": "src/"
+            "Langsys\\OpenApiDocsGenerator\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Langsys\\SwaggerAutoGenerator\\Tests\\": "tests/",
+            "Langsys\\OpenApiDocsGenerator\\Tests\\": "tests/",
             "Tests\\": "tests/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "Langsys\\SwaggerAutoGenerator\\SwaggerAutoGeneratorServiceProvider"
-            ]
+                "Langsys\\OpenApiDocsGenerator\\OpenApiDocsServiceProvider"
+            ],
+            "aliases": {
+                "OpenApiDocs": "Langsys\\OpenApiDocsGenerator\\OpenApiDocsFacade"
+            }
         }
     },
     "require-dev": {
-        "pestphp/pest": "3.x-dev",
-        "orchestra/testbench": "9.x-dev"
+        "pestphp/pest": "^2.0|^3.0",
+        "orchestra/testbench": "^8.0|^9.0"
     },
     "config": {
         "allow-plugins": {
