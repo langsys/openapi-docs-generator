@@ -87,6 +87,14 @@ class OpenApiGenerator
      */
     private function scanFilesForDocumentation(): void
     {
+        $dirs = array_filter($this->annotationsDir, 'is_dir');
+
+        if (empty($dirs)) {
+            throw new OpenApiDocsException(
+                'No valid annotation directories to scan. Check paths.annotations in your openapi-docs config.'
+            );
+        }
+
         $generator = new Generator($this->logger);
 
         // Set OpenAPI spec version
@@ -113,7 +121,7 @@ class OpenApiGenerator
         // Build the file finder from annotation directories
         $exclude = $this->scanOptions['exclude'] ?? [];
         $pattern = $this->scanOptions['pattern'] ?? null;
-        $finder = \OpenApi\Util::finder($this->annotationsDir, $exclude, $pattern);
+        $finder = \OpenApi\Util::finder($dirs, $exclude, $pattern);
 
         // Generate the OpenAPI model
         $analysis = $this->scanOptions['analysis'] ?? null;
