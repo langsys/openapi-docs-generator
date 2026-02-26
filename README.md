@@ -39,26 +39,7 @@ This creates `config/openapi-docs.php`.
 
 ## Quick Start
 
-1. Point the config at your DTO directory and controller annotation directories:
-
-```php
-// config/openapi-docs.php
-
-'documentations' => [
-    'default' => [
-        'paths' => [
-            'annotations' => [app_path()], // directories to scan for @OA annotations
-        ],
-    ],
-],
-
-'defaults' => [
-    'dto' => [
-        'path' => app_path('DataObjects'),
-        'namespace' => 'App\\DataObjects',
-    ],
-],
-```
+1. Out of the box, the package scans your entire `app/` directory for both controller annotations and Data subclasses. No path or namespace configuration needed — DTOs can live anywhere in your project.
 
 2. Create a Spatie Data class:
 
@@ -480,25 +461,19 @@ Useful for API versioning or separating public/internal APIs. Each documentation
     'v1' => [
         'paths' => [
             'docs_json' => 'v1-api-docs.json',
-            'annotations' => [app_path('Http/Controllers/V1')],
-        ],
-        'dto' => [
-            'path' => app_path('DataObjects/V1'),
-            'namespace' => 'App\\DataObjects\\V1',
+            'annotations' => [app_path('Http/Controllers/V1'), app_path('DataObjects/V1')],
         ],
     ],
     'v2' => [
         'paths' => [
             'docs_json' => 'v2-api-docs.json',
-            'annotations' => [app_path('Http/Controllers/V2')],
-        ],
-        'dto' => [
-            'path' => app_path('DataObjects/V2'),
-            'namespace' => 'App\\DataObjects\\V2',
+            'annotations' => [app_path('Http/Controllers/V2'), app_path('DataObjects/V2')],
         ],
     ],
 ],
 ```
+
+The `annotations` directories are scanned for both controller annotations **and** Data subclasses — one config, one scan.
 
 ### Security Definitions
 

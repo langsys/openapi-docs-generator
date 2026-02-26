@@ -5,8 +5,8 @@ use Langsys\OpenApiDocsGenerator\Generators\ConfigFactory;
 test('deepMerge merges associative arrays recursively', function () {
     $base = [
         'dto' => [
-            'path' => '/default/path',
-            'namespace' => 'App\\DataObjects',
+            'paths' => ['/default/path'],
+            'faker_attribute_mapper' => ['_at' => 'date'],
         ],
         'paths' => [
             'docs' => '/storage/api-docs',
@@ -15,14 +15,14 @@ test('deepMerge merges associative arrays recursively', function () {
 
     $override = [
         'dto' => [
-            'path' => '/custom/path',
+            'paths' => ['/custom/path'],
         ],
     ];
 
     $result = ConfigFactory::deepMerge($base, $override);
 
-    expect($result['dto']['path'])->toBe('/custom/path')
-        ->and($result['dto']['namespace'])->toBe('App\\DataObjects')
+    expect($result['dto']['paths'])->toBe(['/custom/path'])
+        ->and($result['dto']['faker_attribute_mapper'])->toBe(['_at' => 'date'])
         ->and($result['paths']['docs'])->toBe('/storage/api-docs');
 });
 

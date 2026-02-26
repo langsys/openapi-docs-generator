@@ -14,10 +14,10 @@ class GeneratorFactory
         $config = ConfigFactory::documentationConfig($documentation);
 
         $dtoConfig = $config['dto'] ?? [];
+        $annotationDirs = $config['paths']['annotations'] ?? [app_path()];
 
         $dtoSchemaBuilder = new DtoSchemaBuilder(
-            dtoPath: $dtoConfig['path'] ?? app_path('DataObjects'),
-            namespace: $dtoConfig['namespace'] ?? 'App\\DataObjects',
+            dtoPaths: $annotationDirs,
             exampleGenerator: new ExampleGenerator(
                 fakerAttributeMapper: $dtoConfig['faker_attribute_mapper'] ?? [],
                 customFunctions: $dtoConfig['custom_functions'] ?? [],

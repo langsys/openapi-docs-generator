@@ -9,8 +9,7 @@ beforeEach(function () {
     $packageRoot = dirname(__DIR__, 2);
 
     $this->builder = new DtoSchemaBuilder(
-        dtoPath: $packageRoot . '/tests/Data',
-        namespace: 'Langsys\\OpenApiDocsGenerator\\Tests\\Data',
+        dtoPaths: $packageRoot . '/tests/Data',
         exampleGenerator: new ExampleGenerator(
             fakerAttributeMapper: [],
             customFunctions: [],

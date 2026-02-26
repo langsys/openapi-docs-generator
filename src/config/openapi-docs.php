@@ -22,7 +22,7 @@ return [
             'paths' => [
                 'docs_json' => 'api-docs.json',
                 'docs_yaml' => 'api-docs.yaml',
-                'annotations' => [], // e.g. [app_path()]
+                'annotations' => [app_path()],
             ],
         ],
     ],
@@ -38,10 +38,8 @@ return [
     'defaults' => [
 
         // --- DTO Schema Generation ---
+        // DTOs are auto-discovered from the same directories as annotations.
         'dto' => [
-            'path' => app_path('DataObjects'),
-            'namespace' => 'App\\DataObjects',
-
             'faker_attribute_mapper' => [
                 'address_1' => 'streetAddress',
                 'address_2' => 'buildingNumber',

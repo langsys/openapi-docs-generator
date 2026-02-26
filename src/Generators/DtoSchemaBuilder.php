@@ -20,12 +20,18 @@ use Symfony\Component\Finder\Finder;
 
 class DtoSchemaBuilder
 {
+    /** @var string[] */
+    private array $dtoPaths;
+
+    /**
+     * @param string|string[] $dtoPaths Directories to scan for Data subclasses
+     */
     public function __construct(
-        private string $dtoPath,
-        private string $namespace,
+        string|array $dtoPaths,
         private ExampleGenerator $exampleGenerator,
         private array $paginationFields,
     ) {
+        $this->dtoPaths = (array) $dtoPaths;
     }
 
     /**
@@ -100,7 +106,7 @@ class DtoSchemaBuilder
     // -------------------------------------------------------------------------
 
     /**
-     * Scan the DTO directory and return fully qualified class names of Data subclasses.
+     * Scan configured directories and return fully qualified class names of Data subclasses.
      *
      * @return string[]
      */
@@ -109,16 +115,50 @@ class DtoSchemaBuilder
         $classes = [];
         $finder = new Finder();
 
-        foreach ($finder->files()->name('*.php')->in($this->dtoPath) as $file) {
-            $relativePath = str_replace('.php', '', $file->getRelativePathname());
-            $className = $this->namespace . '\\' . str_replace('/', '\\', $relativePath);
+        $existingPaths = array_filter($this->dtoPaths, 'is_dir');
 
-            if ($this->isDataSubclass($className)) {
+        if (empty($existingPaths)) {
+            return [];
+        }
+
+        foreach ($finder->files()->name('*.php')->in($existingPaths) as $file) {
+            $className = $this->extractClassName($file->getRealPath());
+
+            if ($className !== null && $this->isDataSubclass($className)) {
                 $classes[] = $className;
             }
         }
 
         return $classes;
+    }
+
+    /**
+     * Parse a PHP file to extract the fully qualified class name.
+     */
+    private function extractClassName(string $filePath): ?string
+    {
+        $contents = file_get_contents($filePath);
+
+        if ($contents === false) {
+            return null;
+        }
+
+        $namespace = null;
+        $class = null;
+
+        if (preg_match('/^\s*namespace\s+([^;]+)\s*;/m', $contents, $matches)) {
+            $namespace = trim($matches[1]);
+        }
+
+        if (preg_match('/^\s*(?:final\s+|abstract\s+|readonly\s+)*class\s+(\w+)/m', $contents, $matches)) {
+            $class = $matches[1];
+        }
+
+        if ($class === null) {
+            return null;
+        }
+
+        return $namespace !== null ? $namespace . '\\' . $class : $class;
     }
 
     /**

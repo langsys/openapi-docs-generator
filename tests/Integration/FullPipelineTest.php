@@ -29,8 +29,7 @@ function makeGenerator(
     $packageRoot = dirname(__DIR__, 2);
 
     $dtoSchemaBuilder = new DtoSchemaBuilder(
-        dtoPath: $packageRoot . '/tests/Data',
-        namespace: 'Langsys\\OpenApiDocsGenerator\\Tests\\Data',
+        dtoPaths: $packageRoot . '/tests/Data',
         exampleGenerator: new ExampleGenerator(
             fakerAttributeMapper: [],
             customFunctions: [],
