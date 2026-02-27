@@ -10,7 +10,6 @@ php artisan openapi:generate
   +-- Scan controller annotations (zircote/swagger-php)
   +-- Reflect on Spatie Data DTOs -> build OpenAPI Schema objects in memory
   +-- Merge DTO schemas into the OpenAPI model
-  +-- Enrich endpoint parameters (optional)
   +-- Inject security definitions from config
   +-- Write api-docs.json / api-docs.yaml
 ```
@@ -21,7 +20,7 @@ DTO-generated schemas are **additive**: if a schema with the same name already e
 
 - PHP 8.1+
 - Laravel 10 / 11
-- [spatie/laravel-data](https://github.com/spatie/laravel-data) ^3.9 or ^4.0
+- [spatie/laravel-data](https://github.com/spatie/laravel-data) ^3.9
 
 ## Installation
 
@@ -548,56 +547,6 @@ Use in annotations: `@OA\Server(url=API_HOST)`.
     ],
     'analyser' => null,                      // custom analyser instance
 ],
-```
-
-## Endpoint Parameter Enrichment
-
-An optional feature that replaces generic `order_by` / `filter_by` query parameter `$ref`s with endpoint-specific inline parameters containing the actual allowed fields and defaults.
-
-### Setup
-
-1. Create the required database tables (`api_resources`, `resource_orderable_fields`, `resource_default_order_entries`, `resource_filterable_fields`, `resource_default_filters`).
-
-2. Enable in config:
-
-```php
-'endpoint_parameters' => [
-    'enabled' => true,
-    'resolver' => \Langsys\OpenApiDocsGenerator\Resolvers\DatabaseEndpointParameterResolver::class,
-    'parameters' => ['order_by', 'filter_by'],
-    'include_extensions' => true,
-    'global_orderable_fields' => ['created_at', 'updated_at'],
-],
-```
-
-### How It Works
-
-For each operation in the generated OpenAPI spec:
-
-1. Infers the resource name from the 200 response `$ref` (e.g. `ProjectPaginatedResponse` -> `ProjectResource`)
-2. Queries the resolver for that endpoint's orderable/filterable fields
-3. Replaces generic `$ref` parameters with inline parameters containing field lists and defaults
-
-### Custom Resolver
-
-Implement the `EndpointParameterResolver` interface to use a different data source:
-
-```php
-use Langsys\OpenApiDocsGenerator\Contracts\EndpointParameterResolver;
-use Langsys\OpenApiDocsGenerator\Data\EndpointParameterData;
-
-class MyResolver implements EndpointParameterResolver
-{
-    public function resolve(string $endpointPath, string $resourceName): ?EndpointParameterData
-    {
-        return new EndpointParameterData(
-            orderableFields: ['title', 'created_at'],
-            defaultOrder: [['created_at', 'desc']],
-            filterableFields: ['status', 'type'],
-            defaultFilters: [['status', 'active']],
-        );
-    }
-}
 ```
 
 ## Viewing Your Docs
