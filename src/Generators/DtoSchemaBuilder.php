@@ -90,6 +90,7 @@ class DtoSchemaBuilder
 
         $schemaProps = [
             'schema' => $schemaName,
+            'type' => 'object',
             'properties' => $properties,
         ];
 
@@ -403,19 +404,21 @@ class DtoSchemaBuilder
     private function buildDataCollectionProperty(object $meta): OA\Property
     {
         $refClass = $meta->collectionOf;
-        $refSchemaName = class_basename($refClass);
+        $refSchemaName = $this->resolveSchemaName($refClass);
 
         // If grouped collection: type object with additionalProperties containing array of $ref items
         if ($meta->groupedCollection !== null) {
             return $this->buildGroupedCollectionProperty($meta, $refSchemaName);
         }
 
-        // Plain DataCollection: type array with items.$ref
+        // Plain DataCollection: type array with items.$ref wrapped in allOf
         $props = [
             'property' => $meta->name,
             'type' => 'array',
             'items' => new OA\Items([
-                'ref' => '#/components/schemas/' . $refSchemaName,
+                'allOf' => [
+                    new OA\Schema(['ref' => '#/components/schemas/' . $refSchemaName]),
+                ],
             ]),
         ];
 
@@ -454,11 +457,13 @@ class DtoSchemaBuilder
      */
     private function buildNestedObjectProperty(object $meta): OA\Property
     {
-        $refSchemaName = class_basename($meta->typeName);
+        $refSchemaName = $this->resolveSchemaName($meta->typeName);
 
         $props = [
             'property' => $meta->name,
-            'ref' => '#/components/schemas/' . $refSchemaName,
+            'allOf' => [
+                new OA\Schema(['ref' => '#/components/schemas/' . $refSchemaName]),
+            ],
         ];
 
         if ($meta->description) {
@@ -535,6 +540,10 @@ class DtoSchemaBuilder
             'type' => $openApiType,
             'example' => $example,
         ];
+
+        if ($openApiType === 'number') {
+            $props['format'] = 'float';
+        }
 
         if ($meta->description) {
             $props['description'] = $meta->description;
@@ -625,6 +634,7 @@ class DtoSchemaBuilder
     {
         return new OA\Schema([
             'schema' => $baseName . 'Response',
+            'type' => 'object',
             'properties' => [
                 new OA\Property([
                     'property' => 'status',
@@ -635,7 +645,10 @@ class DtoSchemaBuilder
                 new OA\Property([
                     'property' => 'data',
                     'description' => 'Response payload',
-                    'ref' => '#/components/schemas/' . $baseName,
+                    'type' => 'object',
+                    'allOf' => [
+                        new OA\Schema(['ref' => '#/components/schemas/' . $baseName]),
+                    ],
                 ]),
             ],
         ]);
@@ -664,12 +677,15 @@ class DtoSchemaBuilder
             'type' => 'array',
             'description' => 'List of items',
             'items' => new OA\Items([
-                'ref' => '#/components/schemas/' . $baseName,
+                'allOf' => [
+                    new OA\Schema(['ref' => '#/components/schemas/' . $baseName]),
+                ],
             ]),
         ]);
 
         return new OA\Schema([
             'schema' => $baseName . 'PaginatedResponse',
+            'type' => 'object',
             'properties' => $properties,
         ]);
     }
@@ -681,6 +697,7 @@ class DtoSchemaBuilder
     {
         return new OA\Schema([
             'schema' => $baseName . 'ListResponse',
+            'type' => 'object',
             'properties' => [
                 new OA\Property([
                     'property' => 'status',
@@ -693,7 +710,9 @@ class DtoSchemaBuilder
                     'type' => 'array',
                     'description' => 'List of items',
                     'items' => new OA\Items([
-                        'ref' => '#/components/schemas/' . $baseName,
+                        'allOf' => [
+                            new OA\Schema(['ref' => '#/components/schemas/' . $baseName]),
+                        ],
                     ]),
                 ]),
             ],

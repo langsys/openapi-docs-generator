@@ -123,9 +123,9 @@ class OpenApiGenerator
         $pattern = $this->scanOptions['pattern'] ?? null;
         $finder = \OpenApi\Util::finder($dirs, $exclude, $pattern);
 
-        // Generate the OpenAPI model
+        // Generate the OpenAPI model (skip validation — DTO schemas haven't been merged yet)
         $analysis = $this->scanOptions['analysis'] ?? null;
-        $this->openApi = $generator->generate($finder, $analysis);
+        $this->openApi = $generator->generate($finder, $analysis, validate: false);
     }
 
     /**
