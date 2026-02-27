@@ -126,12 +126,11 @@ return [
         ],
 
         // --- Endpoint Parameter Enrichment ---
+        // Set 'enabled' => true to enrich order_by/filter_by query parameters
+        // with endpoint-specific field lists from the database.
+        // Requires api_resources tables. Endpoints without DB data keep their generic $refs.
         'endpoint_parameters' => [
             'enabled' => false,
-            'resolver' => null,
-            'parameters' => ['order_by', 'filter_by'],
-            'include_extensions' => true,
-            'global_orderable_fields' => ['created_at', 'updated_at'],
         ],
     ],
 ];

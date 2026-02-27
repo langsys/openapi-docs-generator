@@ -16,7 +16,7 @@ beforeEach(function () {
     Schema::create('resource_orderable_fields', function ($table) {
         $table->id();
         $table->unsignedBigInteger('api_resource_id');
-        $table->string('field');
+        $table->string('field_name');
     });
 
     Schema::create('resource_default_order_entries', function ($table) {
@@ -29,13 +29,13 @@ beforeEach(function () {
     Schema::create('resource_filterable_fields', function ($table) {
         $table->id();
         $table->unsignedBigInteger('api_resource_id');
-        $table->string('field');
+        $table->string('field_name');
     });
 
     Schema::create('resource_default_filters', function ($table) {
         $table->id();
         $table->unsignedBigInteger('resource_filterable_field_id');
-        $table->string('value');
+        $table->string('filter_value');
     });
 
     $this->resolver = new DatabaseEndpointParameterResolver();
@@ -62,8 +62,8 @@ test('it resolves with endpoint-specific match (tier 1)', function () {
     ]);
 
     DB::table('resource_orderable_fields')->insert([
-        ['api_resource_id' => $resourceId, 'field' => 'title'],
-        ['api_resource_id' => $resourceId, 'field' => 'created_at'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'title'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'created_at'],
     ]);
 
     $result = $this->resolver->resolve('api/projects', 'ProjectResource');
@@ -79,7 +79,7 @@ test('it falls back to resource-wide default (tier 2) when no endpoint match', f
     ]);
 
     DB::table('resource_orderable_fields')->insert([
-        ['api_resource_id' => $resourceId, 'field' => 'name'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'name'],
     ]);
 
     $result = $this->resolver->resolve('api/projects', 'ProjectResource');
@@ -95,7 +95,7 @@ test('it prefers endpoint-specific match over resource-wide default', function (
         'endpoint' => null,
     ]);
     DB::table('resource_orderable_fields')->insert([
-        ['api_resource_id' => $defaultId, 'field' => 'default_field'],
+        ['api_resource_id' => $defaultId, 'field_name' => 'default_field'],
     ]);
 
     // Endpoint-specific
@@ -104,7 +104,7 @@ test('it prefers endpoint-specific match over resource-wide default', function (
         'endpoint' => 'api/projects',
     ]);
     DB::table('resource_orderable_fields')->insert([
-        ['api_resource_id' => $specificId, 'field' => 'specific_field'],
+        ['api_resource_id' => $specificId, 'field_name' => 'specific_field'],
     ]);
 
     $result = $this->resolver->resolve('api/projects', 'ProjectResource');
@@ -119,9 +119,9 @@ test('it resolves orderable fields', function () {
     ]);
 
     DB::table('resource_orderable_fields')->insert([
-        ['api_resource_id' => $resourceId, 'field' => 'name'],
-        ['api_resource_id' => $resourceId, 'field' => 'email'],
-        ['api_resource_id' => $resourceId, 'field' => 'created_at'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'name'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'email'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'created_at'],
     ]);
 
     $result = $this->resolver->resolve('api/users', 'UserResource');
@@ -137,12 +137,12 @@ test('it resolves default order entries', function () {
 
     $field1Id = DB::table('resource_orderable_fields')->insertGetId([
         'api_resource_id' => $resourceId,
-        'field' => 'name',
+        'field_name' => 'name',
     ]);
 
     $field2Id = DB::table('resource_orderable_fields')->insertGetId([
         'api_resource_id' => $resourceId,
-        'field' => 'created_at',
+        'field_name' => 'created_at',
     ]);
 
     DB::table('resource_default_order_entries')->insert([
@@ -165,8 +165,8 @@ test('it resolves filterable fields', function () {
     ]);
 
     DB::table('resource_filterable_fields')->insert([
-        ['api_resource_id' => $resourceId, 'field' => 'status'],
-        ['api_resource_id' => $resourceId, 'field' => 'role'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'status'],
+        ['api_resource_id' => $resourceId, 'field_name' => 'role'],
     ]);
 
     $result = $this->resolver->resolve('api/users', 'UserResource');
@@ -182,11 +182,11 @@ test('it resolves default filters', function () {
 
     $fieldId = DB::table('resource_filterable_fields')->insertGetId([
         'api_resource_id' => $resourceId,
-        'field' => 'status',
+        'field_name' => 'status',
     ]);
 
     DB::table('resource_default_filters')->insert([
-        ['resource_filterable_field_id' => $fieldId, 'value' => 'active'],
+        ['resource_filterable_field_id' => $fieldId, 'filter_value' => 'active'],
     ]);
 
     $result = $this->resolver->resolve('api/users', 'UserResource');

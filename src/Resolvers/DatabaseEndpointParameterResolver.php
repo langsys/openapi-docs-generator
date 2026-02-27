@@ -103,11 +103,11 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
      *
      * @return array<string>
      */
-    private function getOrderableFields(int $resourceId): array
+    private function getOrderableFields(string $resourceId): array
     {
         return DB::table('resource_orderable_fields')
             ->where('api_resource_id', $resourceId)
-            ->pluck('field')
+            ->pluck('field_name')
             ->all();
     }
 
@@ -119,7 +119,7 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
      *
      * @return array<array{0: string, 1: string}>
      */
-    private function getDefaultOrder(int $resourceId): array
+    private function getDefaultOrder(string $resourceId): array
     {
         return DB::table('resource_default_order_entries')
             ->join(
@@ -131,11 +131,11 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
             ->where('resource_orderable_fields.api_resource_id', $resourceId)
             ->orderBy('resource_default_order_entries.sort_order')
             ->select([
-                'resource_orderable_fields.field',
+                'resource_orderable_fields.field_name',
                 'resource_default_order_entries.direction',
             ])
             ->get()
-            ->map(fn (object $row) => [$row->field, $row->direction])
+            ->map(fn (object $row) => [$row->field_name, $row->direction])
             ->all();
     }
 
@@ -144,11 +144,11 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
      *
      * @return array<string>
      */
-    private function getFilterableFields(int $resourceId): array
+    private function getFilterableFields(string $resourceId): array
     {
         return DB::table('resource_filterable_fields')
             ->where('api_resource_id', $resourceId)
-            ->pluck('field')
+            ->pluck('field_name')
             ->all();
     }
 
@@ -159,7 +159,7 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
      *
      * @return array<array{0: string, 1: string}>
      */
-    private function getDefaultFilters(int $resourceId): array
+    private function getDefaultFilters(string $resourceId): array
     {
         return DB::table('resource_default_filters')
             ->join(
@@ -170,11 +170,11 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
             )
             ->where('resource_filterable_fields.api_resource_id', $resourceId)
             ->select([
-                'resource_filterable_fields.field',
-                'resource_default_filters.value',
+                'resource_filterable_fields.field_name',
+                'resource_default_filters.filter_value',
             ])
             ->get()
-            ->map(fn (object $row) => [$row->field, $row->value])
+            ->map(fn (object $row) => [$row->field_name, $row->filter_value])
             ->all();
     }
 }

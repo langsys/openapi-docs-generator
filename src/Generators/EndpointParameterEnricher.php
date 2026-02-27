@@ -108,11 +108,14 @@ class EndpointParameterEnricher
         // Extract the schema name from the ref path
         $schemaName = basename($ref);
 
-        // Strip response suffixes to get the base resource name
+        // Strip response suffixes to get the base resource name.
+        // Uses strpos instead of str_ends_with to handle suffixes with
+        // extra trailing parts (e.g. "PaginatedResponseWithMeta").
         $baseName = $schemaName;
         foreach (self::RESPONSE_SUFFIXES as $suffix) {
-            if (str_ends_with($baseName, $suffix)) {
-                $baseName = substr($baseName, 0, -strlen($suffix));
+            $pos = strpos($baseName, $suffix);
+            if ($pos !== false) {
+                $baseName = substr($baseName, 0, $pos);
                 break;
             }
         }
@@ -153,6 +156,7 @@ class EndpointParameterEnricher
      *
      * Checks JsonContent first (direct ref on the content object),
      * then falls back to MediaType content with nested schema ref.
+     * Also handles array-type schemas where the $ref is on items.
      */
     private function extractResponseRef(OA\Response $response): ?string
     {
@@ -162,12 +166,7 @@ class EndpointParameterEnricher
 
         // Handle single JsonContent (which extends Schema, has $ref directly)
         if ($response->content instanceof OA\JsonContent) {
-            $ref = $response->content->ref;
-            if ($ref !== OpenApiGen::UNDEFINED && is_string($ref)) {
-                return $ref;
-            }
-
-            return null;
+            return $this->extractRefFromSchema($response->content);
         }
 
         // Handle array of MediaType objects
@@ -181,10 +180,31 @@ class EndpointParameterEnricher
                     continue;
                 }
 
-                $ref = $mediaType->schema->ref;
-                if ($ref !== OpenApiGen::UNDEFINED && is_string($ref)) {
+                $ref = $this->extractRefFromSchema($mediaType->schema);
+                if ($ref !== null) {
                     return $ref;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract a $ref from a schema, checking both direct ref and items ref (for array types).
+     */
+    private function extractRefFromSchema(OA\Schema $schema): ?string
+    {
+        // Direct ref on the schema itself
+        if ($schema->ref !== OpenApiGen::UNDEFINED && is_string($schema->ref)) {
+            return $schema->ref;
+        }
+
+        // Array-type schema: check items.$ref
+        if ($schema->items !== OpenApiGen::UNDEFINED && $schema->items instanceof OA\Items) {
+            $ref = $schema->items->ref;
+            if ($ref !== OpenApiGen::UNDEFINED && is_string($ref)) {
+                return $ref;
             }
         }
 
