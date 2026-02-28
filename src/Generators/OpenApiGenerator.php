@@ -248,7 +248,6 @@ class OpenApiGenerator
             resolver: $resolver,
             parameterNames: $this->endpointParametersConfig['parameters'] ?? ['order_by', 'filter_by'],
             includeExtensions: $this->endpointParametersConfig['include_extensions'] ?? true,
-            globalOrderableFields: $this->endpointParametersConfig['global_orderable_fields'] ?? ['created_at', 'updated_at'],
         );
 
         $enricher->enrich($this->openApi);

@@ -24,7 +24,6 @@ class EndpointParameterEnricher
         private EndpointParameterResolver $resolver,
         private array $parameterNames = ['order_by', 'filter_by'],
         private bool $includeExtensions = true,
-        private array $globalOrderableFields = [],
     ) {}
 
     /**
@@ -272,12 +271,8 @@ class EndpointParameterEnricher
      */
     private function buildOrderByParameter(EndpointParameterData $data): OA\Parameter
     {
-        $allOrderableFields = array_values(array_unique(
-            array_merge($data->orderableFields, $this->globalOrderableFields)
-        ));
-
-        $description = $this->buildOrderByDescription($allOrderableFields, $data->defaultOrder);
-        $example = $this->buildOrderByExample($data->defaultOrder, $allOrderableFields);
+        $description = $this->buildOrderByDescription($data->orderableFields, $data->defaultOrder);
+        $example = $this->buildOrderByExample($data->defaultOrder, $data->orderableFields);
 
         $properties = [
             'parameter' => 'order_by',
@@ -299,7 +294,7 @@ class EndpointParameterEnricher
 
         if ($this->includeExtensions) {
             $properties['x'] = [
-                'orderable-fields' => $allOrderableFields,
+                'orderable-fields' => $data->orderableFields,
                 'default-order' => array_map(
                     fn (array $entry) => ['field' => $entry[0], 'direction' => $entry[1]],
                     $data->defaultOrder

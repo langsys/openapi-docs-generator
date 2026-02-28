@@ -261,28 +261,6 @@ test('it includes vendor extensions when enabled', function () {
         ->and($param->x)->toHaveKey('default-order');
 });
 
-test('it merges global orderable fields with endpoint fields', function () {
-    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['order_by']);
-
-    $data = new EndpointParameterData(
-        orderableFields: ['title'],
-        defaultOrder: [],
-    );
-
-    $resolver = buildMockResolver($data);
-    $enricher = new EndpointParameterEnricher(
-        resolver: $resolver,
-        globalOrderableFields: ['created_at', 'updated_at'],
-        includeExtensions: true,
-    );
-    $enricher->enrich($openapi);
-
-    $param = $openapi->paths[0]->get->parameters[0];
-    expect($param->description)->toContain('title')
-        ->and($param->description)->toContain('created_at')
-        ->and($param->description)->toContain('updated_at');
-});
-
 test('it does nothing when openapi has no paths', function () {
     $openapi = new OA\OpenApi([
         'info' => new OA\Info(['title' => 'Test', 'version' => '1.0']),
