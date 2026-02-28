@@ -12,12 +12,10 @@ class OpenApiDocsServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                DtoMakeCommand::class,
-                GenerateCommand::class,
-            ]);
-        }
+        $this->commands([
+            DtoMakeCommand::class,
+            GenerateCommand::class,
+        ]);
 
         $this->publishes([
             __DIR__ . '/config/openapi-docs.php' => config_path('openapi-docs.php'),
