@@ -2,6 +2,39 @@
 
 Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://spatie-laravel-data.com/) DTOs. No intermediate annotation files, no UI bundling -- just your DTOs reflected into `api-docs.json` (and optionally YAML), merged with any hand-written controller annotations.
 
+## Table of Contents
+
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Attributes](#attributes)
+  - [#\[Example\]](#example)
+  - [#\[Description\]](#description)
+  - [#\[Omit\]](#omit)
+  - [#\[GroupedCollection\]](#groupedcollection)
+- [Supported Property Types](#supported-property-types)
+  - [Enum Example](#enum-example)
+  - [Nested Data Classes](#nested-data-classes)
+- [Collections](#collections)
+  - [Laravel Data v4 (Recommended)](#laravel-data-v4-recommended)
+  - [Laravel Data v3 (Legacy)](#laravel-data-v3-legacy)
+- [Auto-Generated Response Schemas](#auto-generated-response-schemas)
+- [Example Generation (Faker)](#example-generation-faker)
+- [Artisan Commands](#artisan-commands)
+- [Configuration Reference](#configuration-reference)
+  - [Multiple Documentation Sets](#multiple-documentation-sets)
+  - [Security Definitions](#security-definitions)
+  - [YAML Output](#yaml-output)
+  - [Server / Base Path](#server--base-path)
+  - [OpenAPI Spec Version](#openapi-spec-version)
+  - [Constants](#constants)
+  - [Scan Options](#scan-options)
+- [Viewing Your Docs](#viewing-your-docs)
+- [Programmatic Usage](#programmatic-usage)
+- [Testing](#testing)
+- [License](#license)
+
 ## How It Works
 
 ```
@@ -20,7 +53,7 @@ DTO-generated schemas are **additive**: if a schema with the same name already e
 
 - PHP 8.1+
 - Laravel 10 / 11
-- [spatie/laravel-data](https://github.com/spatie/laravel-data) ^3.9
+- [spatie/laravel-data](https://github.com/spatie/laravel-data) ^3.9 or ^4.0
 
 ## Installation
 
@@ -155,7 +188,7 @@ class UserData extends Data
 
 Mark a property as a grouped/dictionary structure. The argument is the key used in the example.
 
-**Simple grouped array** (plain `array` type):
+**Simple grouped array** (plain `array` type without a typed docblock):
 
 ```php
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\GroupedCollection;
@@ -181,35 +214,7 @@ Produces:
 }
 ```
 
-**Grouped DataCollection** (combined with `#[DataCollectionOf]`):
-
-```php
-use Spatie\LaravelData\DataCollection;
-use Spatie\LaravelData\Attributes\DataCollectionOf;
-
-class CategoryData extends Data
-{
-    public function __construct(
-        #[GroupedCollection('en')]
-        #[DataCollectionOf(ItemData::class)]
-        public DataCollection $items_by_locale,
-    ) {}
-}
-```
-
-Produces:
-
-```json
-{
-  "items_by_locale": {
-    "type": "object",
-    "additionalProperties": {
-      "type": "array",
-      "items": { "$ref": "#/components/schemas/ItemData" }
-    }
-  }
-}
-```
+When combined with a typed collection (via `@var` docblock or `#[DataCollectionOf]`), it produces a dictionary-of-arrays structure instead. See [Collections](#collections) for details.
 
 ## Supported Property Types
 
@@ -223,7 +228,9 @@ The generator handles these types automatically:
 | `bool` | `{ "type": "boolean" }` |
 | `array`, `Collection` | `{ "type": "array", "items": { ... } }` |
 | `SomeData` (nested Data class) | `{ "$ref": "#/components/schemas/SomeData" }` |
-| `DataCollection` with `#[DataCollectionOf]` | `{ "type": "array", "items": { "$ref": "..." } }` |
+| `SomeData[]` via `@var` docblock (v4) | `{ "type": "array", "items": { "$ref": "..." } }` |
+| `Collection<int, SomeData>` via `@var` docblock (v4) | `{ "type": "array", "items": { "$ref": "..." } }` |
+| `DataCollection` with `#[DataCollectionOf]` (v3) | `{ "type": "array", "items": { "$ref": "..." } }` |
 | `BackedEnum` | `{ "type": "string", "enum": ["case1", "case2"] }` |
 | Nullable (`?string`) | Tracked as not required |
 | Default values | Included as `"default": value` |
@@ -287,6 +294,114 @@ Both `AddressData` and `UserData` schemas are generated. The `address` property 
 ```json
 { "address": { "$ref": "#/components/schemas/AddressData" } }
 ```
+
+## Collections
+
+### Laravel Data v4 (Recommended)
+
+In Laravel Data v4, the recommended way to type collections is with `@var` docblock annotations on plain `array` or `Collection` properties. The generator parses these docblocks and produces typed array schemas automatically.
+
+**Array with `ClassName[]`:**
+
+```php
+class OrderData extends Data
+{
+    public function __construct(
+        public string $order_number,
+
+        /** @var OrderItemData[] */
+        public array $items,
+    ) {}
+}
+```
+
+**Collection with generic syntax:**
+
+```php
+use Illuminate\Support\Collection;
+
+class OrderData extends Data
+{
+    public function __construct(
+        /** @var Collection<int, OrderItemData> */
+        public Collection $items,
+    ) {}
+}
+```
+
+Both produce:
+
+```json
+{
+  "items": {
+    "type": "array",
+    "items": { "$ref": "#/components/schemas/OrderItemData" }
+  }
+}
+```
+
+**Grouped collection (v4 style):**
+
+Combine `@var` docblock with `#[GroupedCollection]` for dictionary-of-arrays output:
+
+```php
+class CatalogData extends Data
+{
+    public function __construct(
+        /** @var ProductData[] */
+        #[GroupedCollection('electronics')]
+        public array $products_by_category,
+    ) {}
+}
+```
+
+Produces:
+
+```json
+{
+  "products_by_category": {
+    "type": "object",
+    "additionalProperties": {
+      "type": "array",
+      "items": { "$ref": "#/components/schemas/ProductData" }
+    }
+  }
+}
+```
+
+Non-Data types like `string[]` or `int[]` in docblocks are ignored and fall through to plain array handling.
+
+### Laravel Data v3 (Legacy)
+
+The v3 pattern using `DataCollection` with `#[DataCollectionOf]` is still fully supported:
+
+```php
+use Spatie\LaravelData\DataCollection;
+use Spatie\LaravelData\Attributes\DataCollectionOf;
+
+class OrderData extends Data
+{
+    public function __construct(
+        #[DataCollectionOf(OrderItemData::class)]
+        public DataCollection $items,
+    ) {}
+}
+```
+
+Grouped collections with v3:
+
+```php
+class CatalogData extends Data
+{
+    public function __construct(
+        #[GroupedCollection('electronics')]
+        #[DataCollectionOf(ProductData::class)]
+        public DataCollection $products_by_category,
+    ) {}
+}
+```
+
+Both patterns produce identical OpenAPI output. If you're migrating from v3 to v4, you can update your DTOs incrementally -- existing `DataCollection` properties continue to work alongside new `@var` docblock properties.
 
 ## Auto-Generated Response Schemas
 

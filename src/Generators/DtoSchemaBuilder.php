@@ -217,6 +217,13 @@ class DtoSchemaBuilder
 
         $defaultValue = $this->resolveDefaultValue($property);
 
+        // v4 support: if no collectionOf from attributes and type is array/Collection,
+        // try resolving from @var docblock
+        $collectionOf = $attributes->collectionOf;
+        if ($collectionOf === null && $typeName === 'array') {
+            $collectionOf = $this->resolveCollectionOfFromDocBlock($property);
+        }
+
         return (object) [
             'name' => $property->getName(),
             'type' => $type,
@@ -226,7 +233,7 @@ class DtoSchemaBuilder
             'example' => $attributes->example,
             'exampleArguments' => $attributes->exampleArguments,
             'description' => $attributes->description,
-            'collectionOf' => $attributes->collectionOf,
+            'collectionOf' => $collectionOf,
             'groupedCollection' => $attributes->groupedCollection,
             'defaultValue' => $defaultValue,
             'required' => !$type->allowsNull(),
@@ -342,6 +349,11 @@ class DtoSchemaBuilder
         // Detect nested Data subclass (non-builtin, non-array, non-enum)
         if ($typeName !== 'array' && !$type->isBuiltin() && !enum_exists($typeName)) {
             return $this->buildNestedObjectProperty($meta);
+        }
+
+        // v4: array/Collection with collectionOf resolved from docblock
+        if ($typeName === 'array' && $meta->collectionOf !== null) {
+            return $this->buildDataCollectionProperty($meta);
         }
 
         // Detect grouped array (plain array with GroupedCollection attribute, no collectionOf)
@@ -717,6 +729,95 @@ class DtoSchemaBuilder
                 ]),
             ],
         ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Docblock Parsing (Laravel Data v4 support)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Resolve a collection-of class from a property's @var docblock annotation.
+     *
+     * Supports v4 patterns: `ClassName[]`, `array<key, ClassName>`, `Collection<key, ClassName>`.
+     * Returns the FQCN only if it's a Data subclass, otherwise null.
+     */
+    private function resolveCollectionOfFromDocBlock(ReflectionProperty $property): ?string
+    {
+        $docComment = $property->getDocComment();
+        if ($docComment === false) {
+            return null;
+        }
+
+        // Match @var patterns: ClassName[], array<key, ClassName>, Collection<key, ClassName>
+        $patterns = [
+            '/@var\s+([\w\\\\]+)\[\]/',                          // ClassName[]
+            '/@var\s+(?:array|Collection)<\s*\w+\s*,\s*([\w\\\\]+)\s*>/', // array<key, ClassName> or Collection<key, ClassName>
+        ];
+
+        $className = null;
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $docComment, $matches)) {
+                $className = $matches[1];
+                break;
+            }
+        }
+
+        if ($className === null) {
+            return null;
+        }
+
+        $fqcn = $this->resolveClassFqcn($className, $property->getDeclaringClass());
+        if ($fqcn === null) {
+            return null;
+        }
+
+        return $this->isDataSubclass($fqcn) ? $fqcn : null;
+    }
+
+    /**
+     * Resolve a short class name to its FQCN using the declaring class context.
+     *
+     * Checks: already fully qualified, same namespace, use statements in source file.
+     */
+    private function resolveClassFqcn(string $shortName, ReflectionClass $declaringClass): ?string
+    {
+        // Already a FQCN
+        if (class_exists($shortName)) {
+            return $shortName;
+        }
+
+        // Try same namespace as declaring class
+        $namespace = $declaringClass->getNamespaceName();
+        if ($namespace) {
+            $candidate = $namespace . '\\' . $shortName;
+            if (class_exists($candidate)) {
+                return $candidate;
+            }
+        }
+
+        // Parse use statements from the source file
+        $fileName = $declaringClass->getFileName();
+        if ($fileName === false) {
+            return null;
+        }
+
+        $contents = file_get_contents($fileName);
+        if ($contents === false) {
+            return null;
+        }
+
+        // Match use statements: `use Foo\Bar\ClassName;` or `use Foo\Bar\ClassName as Alias;`
+        if (preg_match_all('/^\s*use\s+([\w\\\\]+?)(?:\s+as\s+(\w+))?\s*;/m', $contents, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $match) {
+                $fqcn = $match[1];
+                $alias = $match[2] ?? class_basename($fqcn);
+                if ($alias === $shortName && class_exists($fqcn)) {
+                    return $fqcn;
+                }
+            }
+        }
+
+        return null;
     }
 
     // -------------------------------------------------------------------------

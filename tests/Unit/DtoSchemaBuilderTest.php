@@ -120,3 +120,55 @@ test('it handles array properties', function () {
     $arrayProp = $properties->first(fn (OA\Property $p) => $p->property === 'array');
     expect($arrayProp->type)->toBe('array');
 });
+
+// -------------------------------------------------------------------------
+// Laravel Data v4 collection patterns
+// -------------------------------------------------------------------------
+
+test('v4: array with @var ClassName[] docblock generates typed array schema', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestDataV4');
+
+    expect($schema)->not->toBeNull();
+
+    $prop = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'items');
+    expect($prop->type)->toBe('array')
+        ->and($prop->items)->toBeInstanceOf(OA\Items::class)
+        ->and($prop->items->allOf)->toBeArray()
+        ->and($prop->items->allOf[0])->toBeInstanceOf(OA\Schema::class)
+        ->and($prop->items->allOf[0]->ref)->toBe('#/components/schemas/ExampleData');
+});
+
+test('v4: Collection with @var Collection<int, ClassName> docblock generates typed array schema', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestDataV4');
+
+    $prop = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'collection_items');
+    expect($prop->type)->toBe('array')
+        ->and($prop->items)->toBeInstanceOf(OA\Items::class)
+        ->and($prop->items->allOf)->toBeArray()
+        ->and($prop->items->allOf[0]->ref)->toBe('#/components/schemas/ExampleData');
+});
+
+test('v4: grouped collection with docblock generates object with additionalProperties', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestDataV4');
+
+    $prop = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'grouped_items');
+    expect($prop->type)->toBe('object')
+        ->and($prop->additionalProperties)->toBeInstanceOf(OA\AdditionalProperties::class)
+        ->and($prop->additionalProperties->type)->toBe('array')
+        ->and($prop->additionalProperties->items->ref)->toBe('#/components/schemas/ExampleData');
+});
+
+test('v3: DataCollection with DataCollectionOf still works (backward compat)', function () {
+    $schemas = $this->builder->buildAll();
+    $testSchema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestData');
+    $properties = collect($testSchema->properties);
+
+    $prop = $properties->first(fn (OA\Property $p) => $p->property === 'grouped_collection');
+    expect($prop->type)->toBe('object')
+        ->and($prop->additionalProperties)->toBeInstanceOf(OA\AdditionalProperties::class)
+        ->and($prop->additionalProperties->type)->toBe('array')
+        ->and($prop->additionalProperties->items->ref)->toBe('#/components/schemas/ExampleData');
+});
