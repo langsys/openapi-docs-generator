@@ -24,12 +24,21 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
 - [Artisan Commands](#artisan-commands)
 - [Configuration Reference](#configuration-reference)
   - [Multiple Documentation Sets](#multiple-documentation-sets)
+  - [Output Paths](#output-paths)
   - [Security Definitions](#security-definitions)
   - [YAML Output](#yaml-output)
   - [Server / Base Path](#server--base-path)
-  - [OpenAPI Spec Version](#openapi-spec-version)
   - [Constants](#constants)
   - [Scan Options](#scan-options)
+- [Thunder Client Integration](#thunder-client-integration)
+  - [Quick Start](#thunder-client-quick-start)
+  - [How It Works](#how-thunder-client-generation-works)
+  - [Auth Configuration](#auth-configuration)
+  - [Environment File](#environment-file)
+  - [Folder Grouping](#folder-grouping)
+  - [Request Bodies](#request-bodies)
+  - [Merge Behavior](#merge-behavior)
+  - [Full Config Reference](#full-thunder-client-config)
 - [Viewing Your Docs](#viewing-your-docs)
 - [Programmatic Usage](#programmatic-usage)
 - [Testing](#testing)
@@ -521,6 +530,8 @@ public string $contact_email,
 
 ### `openapi:generate`
 
+Generate OpenAPI documentation from controller annotations and DTO schemas.
+
 ```bash
 # Generate docs for the default documentation set
 php artisan openapi:generate
@@ -530,7 +541,24 @@ php artisan openapi:generate v2
 
 # Generate docs for all documentation sets
 php artisan openapi:generate --all
+
+# Also generate a Thunder Client collection (see Thunder Client section)
+php artisan openapi:generate --thunder-client
 ```
+
+### `openapi:thunder`
+
+Generate a Thunder Client collection as a standalone command (requires `api-docs.json` to already exist).
+
+```bash
+# Generate for the default documentation set
+php artisan openapi:thunder
+
+# Generate for a specific documentation set
+php artisan openapi:thunder v2
+```
+
+See [Thunder Client Integration](#thunder-client-integration) for full details.
 
 ### `openapi:dto`
 
@@ -564,7 +592,28 @@ final class UserData extends Data
 
 On PHP 8.2+, properties are generated as `readonly`.
 
+### `openapi:make-processor`
+
+Generate a swagger-php processor class. Processors let you customize how annotations are processed during scanning -- the most common use case is controlling the order tags appear in Swagger UI.
+
+```bash
+# Create App\Swagger\TagOrderProcessor (default)
+php artisan openapi:make-processor
+
+# Custom name and namespace
+php artisan openapi:make-processor SortEndpointsProcessor --namespace=App\\OpenApi
+```
+
+The command creates the file and prints the config snippet you need to add. See [Scan Options / Processors](#processors) for details.
+
 ## Configuration Reference
+
+All configuration lives in `config/openapi-docs.php`. The file has two main sections:
+
+- **`documentations`** -- per-documentation-set overrides (file names, scan paths)
+- **`defaults`** -- shared settings inherited by all documentation sets
+
+Every key under `defaults` can be overridden per documentation set via deep merge (associative arrays are merged recursively, scalars and indexed arrays are replaced).
 
 ### Multiple Documentation Sets
 
@@ -589,29 +638,79 @@ Useful for API versioning or separating public/internal APIs. Each documentation
 
 The `annotations` directories are scanned for both controller annotations **and** Data subclasses — one config, one scan.
 
+Generate a specific set with `php artisan openapi:generate v2`, or all sets with `--all`.
+
+### Output Paths
+
+```php
+'paths' => [
+    // Directory where api-docs.json and api-docs.yaml are written
+    'docs' => storage_path('api-docs'),
+
+    // Base server URL added to the OpenAPI servers list (null = no server entry)
+    'base' => env('OPENAPI_BASE_PATH', null),
+
+    // Directories to exclude from scanning
+    'excludes' => [],
+],
+```
+
+The `docs_json` and `docs_yaml` filenames are set per documentation set (under `documentations`), not in defaults. They default to `api-docs.json` and `api-docs.yaml`.
+
 ### Security Definitions
 
-Inject security schemes and global security requirements from config. These are **additive** to any `@OA\SecurityScheme` annotations.
+Inject OpenAPI security schemes and global security requirements into the generated `api-docs.json`. These define how your API authenticates and appear in the `components/securitySchemes` and top-level `security` sections of the spec.
 
 ```php
 'security_definitions' => [
+    // Define authentication schemes your API supports.
+    // These appear in components/securitySchemes in the OpenAPI output.
     'security_schemes' => [
-        'sanctum' => [
-            'type' => 'apiKey',
+        // Bearer token (e.g. Laravel Sanctum)
+        'bearerAuth' => [
+            'type' => 'http',
+            'scheme' => 'bearer',
             'description' => 'Enter token in format: Bearer <token>',
-            'name' => 'Authorization',
-            'in' => 'header',
         ],
+
+        // API key sent as a custom header
+        'apiKey' => [
+            'type' => 'apiKey',
+            'name' => 'X-Authorization',   // header name
+            'in' => 'header',              // where the key is sent
+            'description' => 'API key for machine-to-machine access',
+        ],
+
+        // OAuth2 (e.g. Laravel Passport)
+        // 'passport' => [
+        //     'type' => 'oauth2',
+        //     'flows' => [
+        //         'password' => [
+        //             'authorizationUrl' => '/oauth/authorize',
+        //             'tokenUrl' => '/oauth/token',
+        //             'refreshUrl' => '/oauth/token/refresh',
+        //             'scopes' => [],
+        //         ],
+        //     ],
+        // ],
     ],
+
+    // Global security requirements applied to all endpoints by default.
+    // Each entry references a scheme name from above.
+    // Endpoints can override this with their own @OA\Security annotation.
     'security' => [
-        ['sanctum' => []],
+        // ['bearerAuth' => []],
     ],
 ],
 ```
 
-Annotation-defined security schemes with the same name take precedence over config-defined ones.
+**Precedence**: if you define a security scheme with the same name both in config and via a `@OA\SecurityScheme` annotation, the annotation version wins.
+
+**Note**: these settings control what appears in your OpenAPI spec. They are separate from the [Thunder Client auth config](#auth-configuration), which controls how Thunder Client requests are set up.
 
 ### YAML Output
+
+Generate a YAML copy alongside the JSON output:
 
 ```php
 'generate_yaml_copy' => true,
@@ -625,42 +724,356 @@ OPENAPI_GENERATE_YAML=true
 
 ### Server / Base Path
 
+Add a server entry to the OpenAPI output. This tells API consumers (Swagger UI, Postman, etc.) the base URL for your API.
+
 ```php
 'paths' => [
     'base' => env('OPENAPI_BASE_PATH', 'https://api.example.com/v1'),
 ],
 ```
 
-### OpenAPI Spec Version
+When set, the generated JSON includes:
 
-```php
-'scan_options' => [
-    'open_api_spec_version' => '3.1.0',  // default: '3.0.0'
-],
+```json
+{ "servers": [{ "url": "https://api.example.com/v1" }] }
 ```
+
+When `null`, no `servers` section is added.
 
 ### Constants
 
-Define PHP constants available inside `@OA\*` annotations:
+Define PHP constants that can be referenced inside `@OA\*` annotations. Useful for injecting environment-specific values into your documentation.
 
 ```php
 'constants' => [
     'API_HOST' => env('API_HOST', 'http://localhost'),
+    'API_VERSION' => 'v1',
 ],
 ```
 
-Use in annotations: `@OA\Server(url=API_HOST)`.
+Use in annotations:
+
+```php
+#[OA\Server(url: API_HOST)]
+#[OA\Info(title: 'My API', version: API_VERSION)]
+```
 
 ### Scan Options
 
+Controls how [zircote/swagger-php](https://github.com/zircote/swagger-php) scans your codebase for annotations.
+
 ```php
 'scan_options' => [
-    'exclude' => ['tests', 'vendor'],       // directories to exclude
-    'pattern' => '*.php',                    // file pattern
-    'processors' => [                        // custom processors (injected after BuildPaths)
-        App\Swagger\CustomProcessor::class,
+    'processors' => [],
+    'exclude' => [],
+    'open_api_spec_version' => env('OPENAPI_SPEC_VERSION', '3.0.0'),
+],
+```
+
+#### `exclude`
+
+Directories or files to skip when scanning for annotations. Paths are relative to the annotation directories.
+
+```php
+'exclude' => [
+    'app/Http/Controllers/Internal',
+    'app/Http/Controllers/Admin',
+],
+```
+
+#### `open_api_spec_version`
+
+Which OpenAPI specification version to generate. Defaults to `3.0.0`.
+
+```php
+'open_api_spec_version' => '3.1.0',
+```
+
+#### Processors
+
+Processors are classes that run after swagger-php parses your annotations but before the final OpenAPI document is built. They let you modify, reorder, or enrich the parsed data.
+
+The most common use case is **controlling tag order in Swagger UI**. By default, tags appear in whatever order swagger-php discovers them (which depends on file scan order). A processor lets you define an explicit order.
+
+**Generate a processor:**
+
+```bash
+php artisan openapi:make-processor
+```
+
+This creates `app/Swagger/TagOrderProcessor.php`:
+
+```php
+namespace App\Swagger;
+
+use OpenApi\Analysis;
+use OpenApi\Annotations\OpenApi;
+use OpenApi\Annotations\Tag;
+
+class TagOrderProcessor
+{
+    public function __invoke(Analysis $analysis): void
+    {
+        if (!isset($analysis->openapi)) {
+            return;
+        }
+
+        /** @var OpenApi $openapi */
+        $openapi = $analysis->openapi;
+
+        // Define your tags in the order you want them to appear in Swagger UI.
+        // Each name must match a tag used in your controller annotations.
+        // Example: #[OA\Get(tags: ['Users'])]
+        $openapi->tags = [
+            new Tag(['name' => 'Auth']),
+            new Tag(['name' => 'Users']),
+            new Tag(['name' => 'Projects']),
+            new Tag(['name' => 'Billing']),
+            // Add all your tags here in the desired order...
+        ];
+    }
+}
+```
+
+**Register it in config:**
+
+```php
+'scan_options' => [
+    'processors' => [
+        new \App\Swagger\TagOrderProcessor(),
     ],
-    'analyser' => null,                      // custom analyser instance
+],
+```
+
+Custom processors are injected after swagger-php's `BuildPaths` processor, so all paths and operations are already resolved when your processor runs. You can pass either a class instance or a class name string.
+
+## Thunder Client Integration
+
+Generate [Thunder Client](https://www.thunderclient.com/) collections directly from your OpenAPI documentation. The generator reads your `api-docs.json` and creates a ready-to-use `tc_col_{slug}.json` file that Thunder Client auto-loads -- click "Send" immediately, no manual request setup needed.
+
+### Thunder Client Quick Start
+
+1. Generate your OpenAPI docs first (if not already done):
+
+```bash
+php artisan openapi:generate
+```
+
+2. Generate the Thunder Client collection:
+
+```bash
+# As a separate step
+php artisan openapi:thunder
+
+# Or combined with doc generation
+php artisan openapi:generate --thunder-client
+```
+
+3. Open VS Code -- Thunder Client automatically detects files in `thunder-tests/` and loads the collection.
+
+The generator only creates requests for endpoints that exist in your `api-docs.json`. If a controller method doesn't have OpenAPI annotations, it won't appear in the collection.
+
+### How Thunder Client Generation Works
+
+The generator reads the already-generated `api-docs.json` and:
+
+1. Creates a folder for each API tag (e.g. "Users", "Projects")
+2. Creates a request for each endpoint with the correct method, URL, headers, auth, and body
+3. Converts OpenAPI path parameters (`{id}`) to Thunder Client variables (`{{id}}`)
+4. Prefixes all URLs with a configurable base URL variable (`{{url}}/api/users`)
+5. Builds request bodies from schema examples for POST/PUT/PATCH endpoints
+6. Writes the collection to `thunder-tests/collections/tc_col_{slug}.json`
+7. Optionally generates an environment file with variables from `.env`
+
+### Auth Configuration
+
+The `thunder_client.auth` config maps your OpenAPI security scheme names to Thunder Client auth settings. Each key must match a scheme name used in your OpenAPI `security` annotations.
+
+```php
+'thunder_client' => [
+    'auth' => [
+        // Bearer token auth (e.g. Sanctum, Passport)
+        // Sets auth type to "bearer" in Thunder Client.
+        // The actual token value is stored in your Thunder Client environment
+        // as the variable named in 'token_variable'.
+        'bearerAuth' => [
+            'type' => 'bearer',
+            'token_variable' => 'token',  // TC environment variable name
+        ],
+
+        // API key sent as a custom header
+        // Adds the header to the request and sets auth type to "none"
+        // (since auth is handled via the header itself).
+        'apiKey' => [
+            'type' => 'header',
+            'header_name' => 'X-Authorization',  // header added to request
+            'value' => '{{api_key}}',             // TC variable reference
+        ],
+
+        // Basic auth
+        // Sets auth type to "basic" in Thunder Client.
+        // Username/password are configured in Thunder Client's auth tab.
+        // 'basicAuth' => [
+        //     'type' => 'basic',
+        // ],
+    ],
+
+    // When an endpoint has no security annotation, this scheme is used.
+    // Set to 'none' to leave requests unauthenticated by default.
+    'default_auth' => 'bearerAuth',
+],
+```
+
+**How scheme matching works:**
+
+1. The generator reads each endpoint's `security` field from the OpenAPI JSON (e.g. `"security": [{"bearerAuth": []}]`)
+2. It looks up each scheme name in `thunder_client.auth` to determine how to configure the Thunder Client request
+3. If an endpoint references a scheme name that isn't in your config, it's skipped with a warning
+4. If an endpoint has no `security` field, `default_auth` is used
+
+**Multiple auth schemes on one endpoint:**
+
+If an endpoint supports multiple auth methods (e.g. both bearer and API key), the generator creates **one request per scheme**, with the scheme name appended to the request name:
+
+```
+List Users (bearerAuth)
+List Users (apiKey)
+```
+
+If only one scheme is used, no suffix is added.
+
+### Environment File
+
+Optionally generate a Thunder Client environment file (`tc_env_{slug}.json`) with variables pre-populated from your `.env`:
+
+```php
+'thunder_client' => [
+    'environment' => [
+        'slug' => 'local',       // filename: tc_env_local.json
+        'name' => 'Local',       // display name in Thunder Client
+
+        // Map Thunder Client variable names to values.
+        // 'env:KEY' reads the value from your Laravel .env file.
+        // Any other value is used as-is (empty string = user fills in manually).
+        'variables' => [
+            'url' => 'env:APP_URL',       // reads APP_URL from .env
+            'token' => '',                 // empty -- user pastes their token
+            'api_key' => 'env:API_KEY',   // reads API_KEY from .env
+        ],
+
+        // Appended to the base URL variable when its value comes from env:
+        // e.g. APP_URL=http://localhost -> url=http://localhost/api
+        'url_suffix' => '/api',
+    ],
+],
+```
+
+The environment file is **only created once**. If `tc_env_local.json` already exists, it is never overwritten -- you manage your own environment variables after initial creation.
+
+Set `'environment' => null` to skip environment generation entirely. You can always create environments manually in Thunder Client.
+
+### Folder Grouping
+
+Requests are grouped into folders using the **first tag** from each endpoint's OpenAPI `tags` array:
+
+```php
+// In your controller:
+#[OA\Get(path: '/api/users', tags: ['Users'])]
+//                                    ^^^^^^^
+// -> Goes into "Users" folder in Thunder Client
+```
+
+**Fallback when no tags**: the generator infers a folder name from the URL path. It takes the first meaningful segment after skipping common prefixes:
+
+| Path | Skip segments | Folder |
+|---|---|---|
+| `/api/users/{id}` | `api` | Users |
+| `/api/v1/projects` | `api`, `v1` | Projects |
+| `/billing/invoices` | (none to skip) | Billing |
+
+Configure which segments to skip:
+
+```php
+'skip_path_segments' => ['api', 'v1', 'v2', 'v3'],
+```
+
+### Request Bodies
+
+For POST, PUT, and PATCH endpoints, the generator builds a JSON request body from the schema defined in the endpoint's `requestBody`:
+
+- Resolves `$ref` references to component schemas (up to 3 levels deep)
+- Uses `example` values from schema properties when available
+- Falls back to sensible defaults: `""` for strings, `0` for integers, `false` for booleans, `[]` for arrays
+- Uses the first `enum` value when a property has an enum constraint
+- Merges `allOf` sub-schemas
+
+The body is stored as a JSON string in the request, ready to edit and send.
+
+### Merge Behavior
+
+The generator **never overwrites existing requests**. When you run it again after adding new endpoints:
+
+- Existing requests, folders, and all their data are preserved untouched
+- The collection `_id` is reused (so Thunder Client treats it as the same collection)
+- Only new endpoints (by method + URL path) are appended
+- New folders are created only if needed for new requests
+
+This means you can safely customize requests in Thunder Client (add tests, change bodies, etc.) and re-run the generator without losing your changes.
+
+### Full Thunder Client Config
+
+```php
+'thunder_client' => [
+    // Thunder Client workspace root directory.
+    // Collections are written to {output_dir}/collections/
+    // Environment files are written to {output_dir}/
+    'output_dir' => base_path('thunder-tests'),
+
+    // Slug used in the collection filename: tc_col_{slug}.json
+    // Use a descriptive name if you have multiple collections.
+    'collection_slug' => 'api',
+
+    // Display name shown in Thunder Client's collection list.
+    // When null, uses the 'info.title' from your OpenAPI spec.
+    'collection_name' => null,
+
+    // Thunder Client variable name used as the base URL prefix.
+    // All request URLs are generated as: {{url}}/path/here
+    // The actual value of this variable is set in your TC environment.
+    'base_url_variable' => 'url',
+
+    // Auth scheme mappings -- see "Auth Configuration" section above.
+    'auth' => [
+        'sanctum' => [
+            'type' => 'bearer',
+            'token_variable' => 'token',
+        ],
+    ],
+
+    // Default auth scheme when an endpoint has no security annotation.
+    // Must match a key in the 'auth' array above, or 'none'.
+    'default_auth' => 'sanctum',
+
+    // Environment file generation -- see "Environment File" section above.
+    // Set to null to skip.
+    'environment' => [
+        'slug' => 'local',
+        'name' => 'Local',
+        'variables' => [
+            'url' => 'env:APP_URL',
+        ],
+        'url_suffix' => '/api',
+    ],
+
+    // URL path segments to ignore when inferring folder names from paths.
+    // Only used as a fallback when endpoints have no OpenAPI tags.
+    'skip_path_segments' => ['api', 'v1', 'v2', 'v3'],
+
+    // Headers added to every generated request.
+    // Uses 'name'/'value' format (not 'key'/'value').
+    'default_headers' => [
+        ['name' => 'Accept', 'value' => 'application/json'],
+    ],
 ],
 ```
 
@@ -672,7 +1085,7 @@ This package generates files only. To view them, use any OpenAPI-compatible view
 - [Scalar](https://github.com/scalar/scalar)
 - [Redocly](https://redocly.com/)
 - [Stoplight Elements](https://github.com/stoplightio/elements)
-- Import `api-docs.json` into [Postman](https://www.postman.com/)
+- Import `api-docs.json` into [Postman](https://www.postman.com/) or [Thunder Client](https://www.thunderclient.com/)
 
 ## Programmatic Usage
 
@@ -698,6 +1111,14 @@ For a specific documentation set:
 use Langsys\OpenApiDocsGenerator\Generators\GeneratorFactory;
 
 GeneratorFactory::make('v2')->generateDocs();
+```
+
+Thunder Client generation programmatically:
+
+```php
+use Langsys\OpenApiDocsGenerator\Generators\ThunderClientFactory;
+
+ThunderClientFactory::make('default')->generate();
 ```
 
 ## Testing

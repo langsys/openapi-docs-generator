@@ -74,12 +74,18 @@ return [
 
         // --- Scan Options (for controller annotation scanning) ---
         'scan_options' => [
-            'default_processors_configuration' => [],
-            'analyser' => null,
-            'analysis' => null,
+            // Custom processors run after swagger-php parses your annotations.
+            // Common use case: control the order tags appear in Swagger UI.
+            // Generate a starter processor with: php artisan openapi:make-processor
+            // Example:
+            //   'processors' => [new \App\Swagger\TagOrderProcessor()],
             'processors' => [],
-            'pattern' => null,
+
+            // Directories or files to skip when scanning for annotations.
+            // Example: ['app/Http/Controllers/Internal']
             'exclude' => [],
+
+            // OpenAPI specification version (3.0.0 or 3.1.0)
             'open_api_spec_version' => env('OPENAPI_SPEC_VERSION', '3.0.0'),
         ],
 
@@ -131,6 +137,57 @@ return [
         // Requires api_resources tables. Endpoints without DB data keep their generic $refs.
         'endpoint_parameters' => [
             'enabled' => false,
+        ],
+
+        // --- Thunder Client Collection Generation ---
+        'thunder_client' => [
+            // Thunder Client workspace root directory.
+            // Collections are written to {output_dir}/collections/
+            // Environment files are written to {output_dir}/
+            'output_dir' => base_path('thunder-tests'),
+
+            // Slug used in collection filename: tc_col_{slug}.json
+            'collection_slug' => 'api',
+
+            // Collection display name (null = use OpenAPI info.title)
+            'collection_name' => null,
+
+            // Base URL variable name (used as {{variable}} in URLs)
+            'base_url_variable' => 'url',
+
+            // Authentication schemes (keyed by name, matched to OpenAPI securitySchemes)
+            'auth' => [
+                'sanctum' => [
+                    'type' => 'bearer',
+                    'token_variable' => 'token',
+                ],
+                // 'api_key' => [
+                //     'type' => 'header',
+                //     'header_name' => 'X-Authorization',
+                //     'value' => '{{api_key}}',
+                // ],
+            ],
+
+            // Default auth to apply when an operation has no security defined
+            'default_auth' => 'sanctum',
+
+            // Environment generation (optional, set to null to skip)
+            'environment' => [
+                'slug' => 'local',
+                'name' => 'Local',
+                'variables' => [
+                    'url' => 'env:APP_URL',
+                ],
+                'url_suffix' => '/api',
+            ],
+
+            // Path segments to skip when inferring folder names (fallback when no tags)
+            'skip_path_segments' => ['api', 'v1', 'v2', 'v3'],
+
+            // Default headers to include on every request
+            'default_headers' => [
+                ['name' => 'Accept', 'value' => 'application/json'],
+            ],
         ],
     ],
 ];

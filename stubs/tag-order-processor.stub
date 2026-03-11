@@ -1,0 +1,44 @@
+<?php
+
+namespace {{ namespace }};
+
+use OpenApi\Analysis;
+use OpenApi\Annotations\OpenApi;
+use OpenApi\Annotations\Tag;
+
+/**
+ * Controls the order tags appear in Swagger UI.
+ *
+ * Without this processor, tags are listed in the order swagger-php
+ * discovers them (alphabetical or by file scan order), which may not
+ * match how you want endpoints grouped in the documentation.
+ *
+ * Add this processor to your openapi-docs config:
+ *   'scan_options' => [
+ *       'processors' => [new \{{ namespace }}\{{ class }}()],
+ *   ],
+ *
+ * Then edit the $tags array below to match your API's tag names
+ * in the order you want them displayed.
+ */
+class {{ class }}
+{
+    public function __invoke(Analysis $analysis): void
+    {
+        if (!isset($analysis->openapi)) {
+            return;
+        }
+
+        /** @var OpenApi $openapi */
+        $openapi = $analysis->openapi;
+
+        // Define your tags in the order you want them to appear.
+        // Each name should match a tag used in your controller annotations.
+        // Example: #[OA\Get(tags: ['Users'])]
+        $openapi->tags = [
+            new Tag(['name' => 'Auth']),
+            new Tag(['name' => 'Users']),
+            // Add more tags here...
+        ];
+    }
+}
