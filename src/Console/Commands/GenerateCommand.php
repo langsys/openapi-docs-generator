@@ -4,10 +4,11 @@ namespace Langsys\OpenApiDocsGenerator\Console\Commands;
 
 use Illuminate\Console\Command;
 use Langsys\OpenApiDocsGenerator\Generators\GeneratorFactory;
+use Langsys\OpenApiDocsGenerator\Generators\ThunderClientFactory;
 
 class GenerateCommand extends Command
 {
-    protected $signature = 'openapi:generate {documentation?} {--all}';
+    protected $signature = 'openapi:generate {documentation?} {--all} {--thunder-client}';
 
     protected $description = 'Generate OpenAPI documentation from annotations and DTOs';
 
@@ -34,6 +35,17 @@ class GenerateCommand extends Command
         try {
             GeneratorFactory::make($documentation)->generateDocs();
             $this->info("Documentation '{$documentation}' generated successfully.");
+
+            if ($this->option('thunder-client')) {
+                $generator = ThunderClientFactory::make($documentation);
+                $generator->generate();
+
+                foreach ($generator->getWarnings() as $warning) {
+                    $this->warn($warning);
+                }
+
+                $this->info('Thunder Client collection updated.');
+            }
         } catch (\Throwable $e) {
             $this->error("Failed to generate '{$documentation}': {$e->getMessage()}");
         }

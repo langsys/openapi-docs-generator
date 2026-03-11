@@ -132,5 +132,54 @@ return [
         'endpoint_parameters' => [
             'enabled' => false,
         ],
+
+        // --- Thunder Client Collection Generation ---
+        'thunder_client' => [
+            // Directory for Thunder Client workspace files
+            'output_dir' => base_path('thunder-tests'),
+
+            // Slug used in filename: tc_col_{slug}.json
+            'collection_slug' => 'api',
+
+            // Collection display name (null = use OpenAPI info.title)
+            'collection_name' => null,
+
+            // Base URL variable name (used as {{variable}} in URLs)
+            'base_url_variable' => 'url',
+
+            // Authentication schemes (keyed by name, matched to OpenAPI securitySchemes)
+            'auth' => [
+                'sanctum' => [
+                    'type' => 'bearer',
+                    'token_variable' => 'token',
+                ],
+                // 'api_key' => [
+                //     'type' => 'header',
+                //     'header_name' => 'X-Authorization',
+                //     'value' => '{{api_key}}',
+                // ],
+            ],
+
+            // Default auth to apply when an operation has no security defined
+            'default_auth' => 'sanctum',
+
+            // Environment generation (optional, set to null to skip)
+            'environment' => [
+                'slug' => 'local',
+                'name' => 'Local',
+                'variables' => [
+                    'url' => 'env:APP_URL',
+                ],
+                'url_suffix' => '/api',
+            ],
+
+            // Path segments to skip when inferring folder names (fallback when no tags)
+            'skip_path_segments' => ['api', 'v1', 'v2', 'v3'],
+
+            // Default headers to include on every request
+            'default_headers' => [
+                ['name' => 'Accept', 'value' => 'application/json'],
+            ],
+        ],
     ],
 ];
