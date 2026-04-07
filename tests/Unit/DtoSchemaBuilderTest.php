@@ -112,6 +112,20 @@ test('it handles enum properties', function () {
         ->and($enumProp->default)->toBe('case1');
 });
 
+test('it handles nullable enum properties with null default', function () {
+    $schemas = $this->builder->buildAll();
+    $testSchema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestData');
+    $properties = collect($testSchema->properties);
+
+    $nullableEnumProp = $properties->first(fn (OA\Property $p) => $p->property === 'nullable_enum');
+    expect($nullableEnumProp)->not->toBeNull()
+        ->and($nullableEnumProp->enum)->not->toBe(Generator::UNDEFINED)
+        ->and($nullableEnumProp->enum)->toContain('case1')
+        ->and($nullableEnumProp->enum)->toContain('case2')
+        ->and($nullableEnumProp->default)->toBeNull()
+        ->and($nullableEnumProp->nullable)->toBeTrue();
+});
+
 test('it handles array properties', function () {
     $schemas = $this->builder->buildAll();
     $testSchema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestData');

@@ -224,6 +224,8 @@ class DtoSchemaBuilder
             $collectionOf = $this->resolveCollectionOfFromDocBlock($property);
         }
 
+        $hasDefault = $defaultValue !== null || $this->propertyHasDefault($property);
+
         return (object) [
             'name' => $property->getName(),
             'type' => $type,
@@ -236,6 +238,7 @@ class DtoSchemaBuilder
             'collectionOf' => $collectionOf,
             'groupedCollection' => $attributes->groupedCollection,
             'defaultValue' => $defaultValue,
+            'hasDefault' => $hasDefault,
             'required' => !$type->allowsNull(),
         ];
     }
@@ -313,12 +316,30 @@ class DtoSchemaBuilder
     }
 
     /**
+     * Check if a property has a declared default value (including null).
+     */
+    private function propertyHasDefault(ReflectionProperty $property): bool
+    {
+        $constructor = $property->getDeclaringClass()->getConstructor();
+
+        if ($constructor) {
+            foreach ($constructor->getParameters() as $parameter) {
+                if ($parameter->getName() === $property->getName()) {
+                    return $parameter->isDefaultValueAvailable();
+                }
+            }
+        }
+
+        return $property->hasDefaultValue();
+    }
+
+    /**
      * If the default value is a backed enum case, return its scalar value.
      */
     private function normalizeEnumDefault(mixed $defaultValue, ?ReflectionType $type): mixed
     {
         if ($type instanceof ReflectionNamedType && enum_exists($type->getName())) {
-            return $defaultValue->value;
+            return $defaultValue?->value;
         }
 
         return $defaultValue;
@@ -404,6 +425,12 @@ class DtoSchemaBuilder
 
         if ($meta->defaultValue !== null) {
             $props['default'] = $meta->defaultValue;
+        } elseif ($meta->hasDefault && $meta->defaultValue === null) {
+            $props['default'] = null;
+        }
+
+        if (!$meta->required) {
+            $props['nullable'] = true;
         }
 
         return new OA\Property($props);
