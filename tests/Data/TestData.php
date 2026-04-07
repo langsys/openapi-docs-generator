@@ -32,6 +32,7 @@ class TestData extends Data
         public int $default_int = 3,
         public bool $default_bool = true,
         #[Example('case2')]
-        public ExampleEnum $enum = ExampleEnum::CASE_1
+        public ExampleEnum $enum = ExampleEnum::CASE_1,
+        public ?ExampleEnum $nullable_enum = null
     ) {}
 }
