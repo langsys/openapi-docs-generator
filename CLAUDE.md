@@ -49,7 +49,7 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 
 - **Generators\OpenApiGenerator** — Main orchestrator. Runs the 9-step pipeline.
 - **Generators\GeneratorFactory** — Factory that wires all dependencies from config and returns an `OpenApiGenerator`.
-- **Generators\DtoSchemaBuilder** — Core class. Scans a directory for Spatie `Data` subclasses, reflects on their properties, and builds `OA\Schema` objects directly in memory. Handles enums, nested objects, collections, grouped collections, arrays, and primitives. Auto-generates Response/PaginatedResponse/ListResponse wrappers for Resource DTOs.
+- **Generators\DtoSchemaBuilder** — Core class. Scans a directory for Spatie `Data` subclasses, reflects on their properties, and builds `OA\Schema` objects directly in memory. Handles enums (including nullable enums), nested objects, collections, grouped collections, arrays, DateTime/Carbon (as `string` with `date-time` format), and primitives. Strips `Spatie\LaravelData\Optional` from union types and marks those properties as not required. Auto-generates Response/PaginatedResponse/ListResponse wrappers for Resource DTOs.
 - **Generators\ExampleGenerator** — Produces example values using Faker, with configurable attribute mapping (property name patterns → Faker methods) and custom function overrides.
 - **Generators\ConfigFactory** — Deep-merges `defaults` config with per-documentation overrides.
 - **Generators\SecurityDefinitions** — Post-generation injection of security schemes from config into the JSON file.
@@ -77,26 +77,30 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (50 tests, 135 assertions).
+Tests use Pest with Orchestra Testbench (106 tests, 275 assertions).
 
 | Test File | What It Covers |
 |---|---|
-| `tests/Unit/DtoSchemaBuilderTest.php` | DTO reflection → OA\Schema for types, defaults, enums, arrays |
+| `tests/Unit/DtoSchemaBuilderTest.php` | DTO reflection → OA\Schema for types, defaults, enums, nullable enums, DateTime/Carbon, Optional unions, arrays, v4 collections |
 | `tests/Unit/ConfigFactoryTest.php` | Deep merge — associative merge, scalar replacement, new keys |
 | `tests/Unit/SecurityDefinitionsTest.php` | Security injection, deduplication, annotation precedence |
 | `tests/Unit/EndpointParameterEnricherTest.php` | Parameter replacement, resource name inference, vendor extensions |
 | `tests/Unit/DatabaseEndpointParameterResolverTest.php` | SQLite in-memory, two-tier lookup, missing tables |
 | `tests/Unit/DataObjectTest.php` | `openapi:dto` command error handling |
+| `tests/Unit/ProcessorTagSynchronizerTest.php` | Tag synchronization between OpenAPI output and processor config |
+| `tests/Unit/ThunderClientGeneratorTest.php` | Thunder Client collection generation, auth, merging, sorting |
 | `tests/Integration/FullPipelineTest.php` | End-to-end: scan + DTO build + security + servers + JSON/YAML |
 
-Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`).
+Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
 Test fixtures (controller with OA attributes for scanning) live in `tests/Fixtures/`.
 
 ## Key Patterns
 
 - PHP 8.1+ required; PHP 8.2 readonly properties supported via separate stub (`stubs/dto-82.stub`).
 - zircote/swagger-php ^4.0: Unset values use `Generator::UNDEFINED` (not null). Always check with `=== Generator::UNDEFINED`.
-- Enum handling: uses explicit `#[Example]` value when set, otherwise picks a random enum case value.
+- Enum handling: uses explicit `#[Example]` value when set, otherwise picks a random enum case value. Nullable enums (`?ExampleEnum`) correctly set `nullable: true` and handle null defaults.
+- DateTime/Carbon handling: properties typed as `Carbon`, `CarbonImmutable`, `DateTime`, `DateTimeImmutable`, or any `DateTimeInterface` implementation are rendered as `type: "string", format: "date-time"` with ISO 8601 examples. They are not treated as nested `$ref` objects.
+- Laravel Data Optional: union types containing `Spatie\LaravelData\Optional` (e.g., `string|Optional`) have Optional stripped — the remaining type is used for the schema, and the property is excluded from the `required` array. This matches Laravel Data's "sometimes" validation behavior.
 - Multiple documentation sets: each key in `documentations` config overrides `defaults` via deep merge (associative arrays merged, scalars/indexed arrays replaced).
 - No UI serving — this package is generation-only. Use a separate Swagger UI viewer.
 
