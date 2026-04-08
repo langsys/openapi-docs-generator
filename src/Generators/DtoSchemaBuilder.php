@@ -15,11 +15,24 @@ use ReflectionClass;
 use ReflectionNamedType;
 use ReflectionProperty;
 use ReflectionType;
+use ReflectionUnionType;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
 use Symfony\Component\Finder\Finder;
 
 class DtoSchemaBuilder
 {
+    private const LARAVEL_DATA_OPTIONAL = 'Spatie\\LaravelData\\Optional';
+
+    private const DATETIME_CLASSES = [
+        'DateTime',
+        'DateTimeImmutable',
+        'DateTimeInterface',
+        'Carbon\\Carbon',
+        'Carbon\\CarbonImmutable',
+        'Carbon\\CarbonInterface',
+        'Illuminate\\Support\\Carbon',
+    ];
+
     /** @var string[] */
     private array $dtoPaths;
 
@@ -239,21 +252,63 @@ class DtoSchemaBuilder
             'groupedCollection' => $attributes->groupedCollection,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
-            'required' => !$type->allowsNull(),
+            'required' => !$type->allowsNull() && !$this->propertyDeclaresLaravelDataOptional($property),
         ];
     }
 
     /**
      * Resolve the effective ReflectionType for a property, unwrapping union types.
+     *
+     * Unions that include Spatie\LaravelData\Optional are reduced to the remaining
+     * type(s) — Optional is a sentinel, not a data type.
      */
     private function resolvePropertyType(ReflectionProperty $property): ReflectionType
     {
         $type = $property->getType();
-        if (method_exists($type, 'getTypes')) {
-            [$type] = $type->getTypes();
+
+        if (!$type instanceof ReflectionUnionType) {
+            return $type;
         }
 
-        return $type;
+        $nonOptionalMembers = [];
+        foreach ($type->getTypes() as $member) {
+            if ($member instanceof ReflectionNamedType && $this->isLaravelDataOptionalType($member)) {
+                continue;
+            }
+            $nonOptionalMembers[] = $member;
+        }
+
+        return $nonOptionalMembers[0] ?? $type->getTypes()[0];
+    }
+
+    /**
+     * Whether the property type is a union that includes Laravel Data's Optional sentinel.
+     */
+    private function propertyDeclaresLaravelDataOptional(ReflectionProperty $property): bool
+    {
+        $type = $property->getType();
+        if (!$type instanceof ReflectionUnionType) {
+            return false;
+        }
+
+        foreach ($type->getTypes() as $member) {
+            if ($member instanceof ReflectionNamedType && $this->isLaravelDataOptionalType($member)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * True when a named type refers to Spatie\LaravelData\Optional.
+     */
+    private function isLaravelDataOptionalType(ReflectionNamedType $type): bool
+    {
+        $name = $type->getName();
+
+        return $name === self::LARAVEL_DATA_OPTIONAL
+            || (class_exists($name) && is_a($name, self::LARAVEL_DATA_OPTIONAL, true));
     }
 
     /**
@@ -338,6 +393,14 @@ class DtoSchemaBuilder
      */
     private function normalizeEnumDefault(mixed $defaultValue, ?ReflectionType $type): mixed
     {
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $member) {
+                if ($member instanceof ReflectionNamedType && enum_exists($member->getName())) {
+                    return $defaultValue?->value;
+                }
+            }
+        }
+
         if ($type instanceof ReflectionNamedType && enum_exists($type->getName())) {
             return $defaultValue?->value;
         }
@@ -367,6 +430,11 @@ class DtoSchemaBuilder
             return $this->buildDataCollectionProperty($meta);
         }
 
+        // Detect DateTime/Carbon types — treat as string with date-time format
+        if ($this->isDateTimeType($typeName)) {
+            return $this->buildDateTimeProperty($meta);
+        }
+
         // Detect nested Data subclass (non-builtin, non-array, non-enum)
         if ($typeName !== 'array' && !$type->isBuiltin() && !enum_exists($typeName)) {
             return $this->buildNestedObjectProperty($meta);
@@ -389,6 +457,49 @@ class DtoSchemaBuilder
 
         // Primitive types: string, int, bool, float
         return $this->buildPrimitiveProperty($meta);
+    }
+
+    /**
+     * Check if a type name is a DateTime-related class.
+     */
+    private function isDateTimeType(string $typeName): bool
+    {
+        foreach (self::DATETIME_CLASSES as $dateTimeClass) {
+            if ($typeName === $dateTimeClass || str_ends_with($typeName, '\\' . $dateTimeClass)) {
+                return true;
+            }
+        }
+
+        return is_a($typeName, \DateTimeInterface::class, true);
+    }
+
+    /**
+     * Build a property for DateTime/Carbon types — serialized as ISO 8601 strings.
+     */
+    private function buildDateTimeProperty(object $meta): OA\Property
+    {
+        $example = $meta->example ?? '2024-01-15T10:30:00+00:00';
+
+        $props = [
+            'property' => $meta->name,
+            'type' => 'string',
+            'format' => 'date-time',
+            'example' => $example,
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        if ($meta->defaultValue !== null) {
+            $props['default'] = $meta->defaultValue;
+        }
+
+        if (!$meta->required) {
+            $props['nullable'] = true;
+        }
+
+        return new OA\Property($props);
     }
 
     /**
