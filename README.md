@@ -16,6 +16,8 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
 - [Supported Property Types](#supported-property-types)
   - [Enum Example](#enum-example)
   - [Nested Data Classes](#nested-data-classes)
+  - [DateTime / Carbon](#datetime--carbon)
+  - [Optional Properties (`T|Optional`)](#optional-properties-toptional)
 - [Collections](#collections)
   - [Laravel Data v4 (Recommended)](#laravel-data-v4-recommended)
   - [Laravel Data v3 (Legacy)](#laravel-data-v3-legacy)
@@ -241,6 +243,9 @@ The generator handles these types automatically:
 | `Collection<int, SomeData>` via `@var` docblock (v4) | `{ "type": "array", "items": { "$ref": "..." } }` |
 | `DataCollection` with `#[DataCollectionOf]` (v3) | `{ "type": "array", "items": { "$ref": "..." } }` |
 | `BackedEnum` | `{ "type": "string", "enum": ["case1", "case2"] }` |
+| `?BackedEnum` (nullable enum) | `{ "type": "string", "enum": [...], "nullable": true }` |
+| `Carbon`, `DateTime`, etc. | `{ "type": "string", "format": "date-time" }` |
+| `string\|Optional` (Laravel Data) | `{ "type": "string" }` — excluded from `required` |
 | Nullable (`?string`) | Tracked as not required |
 | Default values | Included as `"default": value` |
 
@@ -303,6 +308,76 @@ Both `AddressData` and `UserData` schemas are generated. The `address` property 
 ```json
 { "address": { "$ref": "#/components/schemas/AddressData" } }
 ```
+
+### DateTime / Carbon
+
+Properties typed as `Carbon`, `CarbonImmutable`, `DateTime`, `DateTimeImmutable`, or any `DateTimeInterface` implementation are automatically rendered as `type: "string"` with `format: "date-time"` — matching Laravel Data's default ISO 8601 serialization.
+
+```php
+use Carbon\Carbon;
+
+class EventData extends Data
+{
+    public function __construct(
+        public string $title,
+        public Carbon $starts_at,
+        public ?Carbon $cancelled_at = null,
+
+        #[Example('2025-12-31T23:59:59+00:00')]
+        public Carbon $deadline,
+    ) {}
+}
+```
+
+Produces:
+
+```json
+{
+  "starts_at": { "type": "string", "format": "date-time", "example": "2024-01-15T10:30:00+00:00" },
+  "cancelled_at": { "type": "string", "format": "date-time", "nullable": true },
+  "deadline": { "type": "string", "format": "date-time", "example": "2025-12-31T23:59:59+00:00" }
+}
+```
+
+Without this, `Carbon` and `DateTime` would be treated as nested objects with a `$ref` — which is incorrect since Laravel Data serializes them as ISO 8601 strings.
+
+### Optional Properties (`T|Optional`)
+
+[Spatie Laravel Data's `Optional`](https://spatie.be/docs/laravel-data/v4/as-a-data-transfer-object/optional-properties) type is used in request DTOs to mark fields that can be omitted entirely from the payload (the "sometimes" validation rule). The generator strips `Optional` from union types and excludes the property from the schema's `required` array.
+
+```php
+use Spatie\LaravelData\Data;
+use Spatie\LaravelData\Optional;
+
+class UpdateUserRequest extends Data
+{
+    public function __construct(
+        public string $id,                        // required
+        public string|Optional $name,             // optional — type resolves to string
+        public Optional|string $email,            // union order doesn't matter
+        public int|Optional $age,                 // optional — type resolves to integer
+        public UserStatus|Optional $status = UserStatus::Active,  // optional enum with default
+    ) {}
+}
+```
+
+Produces a schema where only `id` is in the `required` array, and each optional property uses its underlying type:
+
+```json
+{
+  "schema": "UpdateUserRequest",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "integer" },
+    "name": { "type": "string" },
+    "email": { "type": "string" },
+    "age": { "type": "integer" },
+    "status": { "type": "string", "enum": ["active", "inactive"], "default": "active" }
+  }
+}
+```
+
+> **Note**: `Optional` is different from nullable (`?string`). Nullable means the field can be present with a `null` value. `Optional` means the field can be absent from the request entirely. Both result in the property being excluded from `required`, but they represent different semantics.
 
 ## Collections
 
