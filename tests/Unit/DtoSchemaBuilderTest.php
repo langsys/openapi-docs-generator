@@ -175,6 +175,79 @@ test('v4: grouped collection with docblock generates object with additionalPrope
         ->and($prop->additionalProperties->items->ref)->toBe('#/components/schemas/ExampleData');
 });
 
+// -------------------------------------------------------------------------
+// Spatie Laravel Data Optional unions (T|Optional)
+// -------------------------------------------------------------------------
+
+test('Optional union uses underlying type and omits property from request required', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'OptionalUnionTestRequest');
+
+    expect($schema)->not->toBeNull()
+        ->and($schema->required)->toBe(['required_field']);
+
+    $props = collect($schema->properties);
+
+    $artist = $props->first(fn (OA\Property $p) => $p->property === 'artist');
+    expect($artist->type)->toBe('string');
+
+    $title = $props->first(fn (OA\Property $p) => $p->property === 'title_reversed_union');
+    expect($title->type)->toBe('string');
+
+    $count = $props->first(fn (OA\Property $p) => $p->property === 'count');
+    expect($count->type)->toBe('integer');
+
+    $status = $props->first(fn (OA\Property $p) => $p->property === 'status');
+    expect($status->type)->toBe('string')
+        ->and($status->enum)->not->toBe(Generator::UNDEFINED)
+        ->and($status->default)->toBe('case1');
+});
+
+// -------------------------------------------------------------------------
+// DateTime / Carbon support
+// -------------------------------------------------------------------------
+
+test('Carbon properties are rendered as string with date-time format', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+
+    expect($schema)->not->toBeNull();
+
+    $props = collect($schema->properties);
+
+    $createdAt = $props->first(fn (OA\Property $p) => $p->property === 'created_at');
+    expect($createdAt->type)->toBe('string')
+        ->and($createdAt->format)->toBe('date-time');
+
+    $publishedAt = $props->first(fn (OA\Property $p) => $p->property === 'published_at');
+    expect($publishedAt->type)->toBe('string')
+        ->and($publishedAt->format)->toBe('date-time');
+
+    $legacyDate = $props->first(fn (OA\Property $p) => $p->property === 'legacy_date');
+    expect($legacyDate->type)->toBe('string')
+        ->and($legacyDate->format)->toBe('date-time');
+});
+
+test('nullable Carbon property sets nullable true', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+    $props = collect($schema->properties);
+
+    $deletedAt = $props->first(fn (OA\Property $p) => $p->property === 'deleted_at');
+    expect($deletedAt->type)->toBe('string')
+        ->and($deletedAt->format)->toBe('date-time')
+        ->and($deletedAt->nullable)->toBeTrue();
+});
+
+test('DateTime property with explicit Example uses that value', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+    $props = collect($schema->properties);
+
+    $withExample = $props->first(fn (OA\Property $p) => $p->property === 'with_example');
+    expect($withExample->example)->toBe('2025-06-01T00:00:00+00:00');
+});
+
 test('v3: DataCollection with DataCollectionOf still works (backward compat)', function () {
     $schemas = $this->builder->buildAll();
     $testSchema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestData');
