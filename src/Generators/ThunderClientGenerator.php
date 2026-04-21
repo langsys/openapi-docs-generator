@@ -19,6 +19,8 @@ class ThunderClientGenerator
         private array $defaultHeaders,
         private ?array $environmentConfig,
         private ?string $environmentFile,
+        private bool $refresh = false,
+        private bool $wipe = false,
     ) {}
 
     public function generate(): void
@@ -28,12 +30,16 @@ class ThunderClientGenerator
             return;
         }
 
+        if ($this->wipe && file_exists($this->collectionFile)) {
+            unlink($this->collectionFile);
+        }
+
         $existing = $this->loadExistingCollection();
         $collection = $this->resolveCollectionShell($existing, $openApi);
 
-        $existingLookup = $this->buildExistingLookup($existing);
+        $existingByName = $this->buildExistingByName($existing);
         $folders = $existing['folders'] ?? [];
-        $requests = $existing['requests'] ?? [];
+        $requests = $this->refresh ? [] : ($existing['requests'] ?? []);
         $folderMap = $this->buildFolderMap($folders);
 
         $globalSecurity = $openApi['security'] ?? [];
@@ -47,12 +53,6 @@ class ThunderClientGenerator
                 }
 
                 $operation = $pathItem[$method];
-                $normalizedPath = $this->normalizePath($path);
-                $lookupKey = strtoupper($method) . '|' . $normalizedPath;
-
-                if (isset($existingLookup[$lookupKey])) {
-                    continue;
-                }
 
                 $folderName = $this->resolveFolderName($operation, $path);
                 $folderId = '';
@@ -85,9 +85,17 @@ class ThunderClientGenerator
                         $requestName .= ' (' . $variant['name_suffix'] . ')';
                     }
 
+                    $existingRequest = $existingByName[$requestName] ?? null;
+
+                    // Default behavior: skip if already exists so manual edits are preserved
+                    if ($existingRequest !== null && !$this->refresh) {
+                        continue;
+                    }
+
                     $requestHeaders = array_merge($headers, $variant['extra_headers']);
 
-                    $requests[] = $this->buildRequest(
+                    $requests[] = $this->mergeRequest(
+                        existing: $existingRequest,
                         colId: $collection['_id'],
                         containerId: $folderId,
                         name: $requestName,
@@ -108,7 +116,7 @@ class ThunderClientGenerator
         $collection['requests'] = $this->sortRequests($requests, $collection['folders']);
 
         $this->writeJson($this->collectionFile, $collection);
-        $this->generateEnvironment();
+        $this->generateEnvironment($collection['requests']);
     }
 
     public function getWarnings(): array
@@ -164,7 +172,7 @@ class ThunderClientGenerator
         ];
     }
 
-    private function buildExistingLookup(?array $existing): array
+    private function buildExistingByName(?array $existing): array
     {
         $lookup = [];
         if ($existing === null) {
@@ -172,29 +180,60 @@ class ThunderClientGenerator
         }
 
         foreach ($existing['requests'] ?? [] as $request) {
-            $url = $request['url'] ?? '';
-            $method = strtoupper($request['method'] ?? 'GET');
-            $normalized = $this->normalizeUrl($url);
-            $lookup[$method . '|' . $normalized] = true;
+            if (isset($request['name'])) {
+                $lookup[$request['name']] = $request;
+            }
         }
 
         return $lookup;
     }
 
-    private function normalizeUrl(string $url): string
-    {
-        $prefix = '{{' . $this->baseUrlVariable . '}}';
-        if (str_starts_with($url, $prefix)) {
-            $url = substr($url, strlen($prefix));
+    private function mergeRequest(
+        ?array $existing,
+        string $colId,
+        string $containerId,
+        string $name,
+        string $url,
+        string $method,
+        array $headers,
+        array $body,
+        array $auth,
+        int $sortNum,
+    ): array {
+        if ($existing === null) {
+            return $this->buildRequest(
+                colId: $colId,
+                containerId: $containerId,
+                name: $name,
+                url: $url,
+                method: $method,
+                headers: $headers,
+                body: $body,
+                auth: $auth,
+                sortNum: $sortNum,
+            );
         }
 
-        return rtrim($url, '/');
-    }
+        // Refresh url, headers, auth from spec. Preserve _id, created, tests.
+        // Only regenerate body if existing body is empty (don't clobber user-edited payloads).
+        $existingBodyRaw = $existing['body']['raw'] ?? '';
+        $mergedBody = empty($existingBodyRaw) ? $body : $existing['body'];
 
-    private function normalizePath(string $path): string
-    {
-        $converted = $this->convertPathParams($path);
-        return rtrim($converted, '/');
+        return [
+            '_id' => $existing['_id'] ?? $this->uuid(),
+            'colId' => $colId,
+            'containerId' => $containerId,
+            'name' => $name,
+            'url' => $url,
+            'method' => $method,
+            'sortNum' => $sortNum,
+            'created' => $existing['created'] ?? $this->timestamp(),
+            'modified' => $this->timestamp(),
+            'headers' => $headers,
+            'body' => $mergedBody,
+            'auth' => $auth,
+            'tests' => $existing['tests'] ?? [],
+        ];
     }
 
     private function convertPathParams(string $path): string
@@ -328,7 +367,8 @@ class ThunderClientGenerator
 
     private function resolveSchemaToExample(array $schema, array $allSchemas, int $depth, array $visited): mixed
     {
-        if ($depth > 3) {
+        // Deep nesting guard — rely on $visited for cycle detection primarily
+        if ($depth > 10) {
             return new \stdClass();
         }
 
@@ -347,6 +387,9 @@ class ThunderClientGenerator
                 $result = $this->resolveSchemaToExample($subSchema, $allSchemas, $depth + 1, $visited);
                 if (is_array($result)) {
                     $merged = array_merge($merged, $result);
+                } elseif ($result instanceof \stdClass) {
+                    // Preserve object shape even when nested resolution bailed (e.g. cycle)
+                    return $result;
                 }
             }
             return $merged;
@@ -369,6 +412,9 @@ class ThunderClientGenerator
                 $result[$propName] = $propSchema['example'];
             } elseif (isset($propSchema['enum']) && !empty($propSchema['enum'])) {
                 $result[$propName] = $propSchema['enum'][0];
+            } elseif (($propSchema['type'] ?? null) === 'array') {
+                $items = $propSchema['items'] ?? [];
+                $result[$propName] = [$this->resolveSchemaToExample($items, $allSchemas, $depth + 1, $visited)];
             } elseif (isset($propSchema['$ref']) || isset($propSchema['properties']) || isset($propSchema['allOf'])) {
                 $result[$propName] = $this->resolveSchemaToExample($propSchema, $allSchemas, $depth + 1, $visited);
             } else {
@@ -494,21 +540,7 @@ class ThunderClientGenerator
         ];
     }
 
-    private function nextSortNum(array $requests): int
-    {
-        if (empty($requests)) {
-            return 10000;
-        }
-
-        $max = 0;
-        foreach ($requests as $r) {
-            $max = max($max, $r['sortNum'] ?? 0);
-        }
-
-        return $max + 10000;
-    }
-
-    private function generateEnvironment(): void
+    private function generateEnvironment(array $requests = []): void
     {
         if ($this->environmentConfig === null || $this->environmentFile === null) {
             return;
@@ -532,6 +564,19 @@ class ThunderClientGenerator
             $data[] = ['name' => $varName, 'value' => $resolved];
         }
 
+        // Auto-add placeholder entries for any {{variable}} referenced in auth schemes
+        // or URL path params so users have a single place to set them.
+        $autoVariables = array_merge(
+            $this->extractAuthVariables(),
+            $this->extractPathVariables($requests),
+        );
+        $existingNames = array_column($data, 'name');
+        foreach (array_unique($autoVariables) as $varName) {
+            if (!in_array($varName, $existingNames, true) && $varName !== $this->baseUrlVariable) {
+                $data[] = ['name' => $varName, 'value' => ''];
+            }
+        }
+
         $now = $this->timestamp();
         $env = [
             '_id' => $this->uuid(),
@@ -544,6 +589,52 @@ class ThunderClientGenerator
         ];
 
         $this->writeJson($this->environmentFile, $env);
+    }
+
+    private function nextSortNum(array $requests): int
+    {
+        if (empty($requests)) {
+            return 10000;
+        }
+
+        $max = 0;
+        foreach ($requests as $request) {
+            $max = max($max, $request['sortNum'] ?? 0);
+        }
+
+        return $max + 10000;
+    }
+
+    private function extractAuthVariables(): array
+    {
+        $variables = [];
+        foreach ($this->authSchemes as $scheme) {
+            foreach ($scheme as $value) {
+                if (!is_string($value)) {
+                    continue;
+                }
+                if (preg_match_all('/\{\{(\w+)\}\}/', $value, $matches)) {
+                    foreach ($matches[1] as $varName) {
+                        $variables[$varName] = true;
+                    }
+                }
+            }
+        }
+        return array_keys($variables);
+    }
+
+    private function extractPathVariables(array $requests): array
+    {
+        $variables = [];
+        foreach ($requests as $request) {
+            $url = $request['url'] ?? '';
+            if (preg_match_all('/\{\{(\w+)\}\}/', $url, $matches)) {
+                foreach ($matches[1] as $varName) {
+                    $variables[$varName] = true;
+                }
+            }
+        }
+        return array_keys($variables);
     }
 
     private function resolveEnvValue(string $value): string

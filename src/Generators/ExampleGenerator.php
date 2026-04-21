@@ -29,7 +29,7 @@ class ExampleGenerator
         [$arguments] = $arguments;
         $propertyType = $arguments['type'] ?? 'string';
 
-        $function = $this->_getExampleFunction($name);
+        $function = $this->_getExampleFunction($name, $propertyType);
 
         // If $function is a string, handle it as a method on this class or a Faker method
         if (is_string($function) && isset($this->customFunctions[$function])) {
@@ -50,7 +50,7 @@ class ExampleGenerator
         }
     }
 
-    private function _getExampleFunction(string $name): string
+    private function _getExampleFunction(string $name, string $propertyType = 'string'): string
     {
         // Fallback to default function handling
         if (str_starts_with($name, self::FAKER_FUNCTION_PREFIX)) {
@@ -58,9 +58,25 @@ class ExampleGenerator
             return $functionName;
         }
 
-        // Check the attribute mapping for default or extended configurations
+        // Only apply string-producing fakers to string properties — avoid polluting
+        // booleans, integers, etc. with mismatched types.
+        if ($propertyType !== 'string') {
+            return $name;
+        }
+
+        // Match hints as whole words (underscore-delimited) or suffixes.
+        // Hints starting with `_` are treated as suffix matches (e.g. `_at`, `_id`).
+        // Other hints must match as a whole word: the full name, or a segment between underscores.
         foreach ($this->fakerAttributeMapper as $hint => $function) {
-            if (str_contains($name, $hint)) {
+            if (str_starts_with($hint, '_')) {
+                if (str_ends_with($name, $hint)) {
+                    return $function;
+                }
+                continue;
+            }
+
+            $segments = explode('_', $name);
+            if (in_array($hint, $segments, true)) {
                 return $function;
             }
         }

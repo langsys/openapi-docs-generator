@@ -10,7 +10,7 @@ use Langsys\OpenApiDocsGenerator\Generators\ThunderClientFactory;
 
 class GenerateCommand extends Command
 {
-    protected $signature = 'openapi:generate {documentation?} {--all} {--thunder-client}';
+    protected $signature = 'openapi:generate {documentation?} {--all} {--thunder-client} {--refresh} {--wipe}';
 
     protected $description = 'Generate OpenAPI documentation from annotations and DTOs';
 
@@ -41,7 +41,11 @@ class GenerateCommand extends Command
             $this->synchronizeProcessorTags($documentation);
 
             if ($this->option('thunder-client')) {
-                $generator = ThunderClientFactory::make($documentation);
+                $generator = ThunderClientFactory::make(
+                    $documentation,
+                    refresh: (bool) $this->option('refresh'),
+                    wipe: (bool) $this->option('wipe'),
+                );
                 $generator->generate();
 
                 foreach ($generator->getWarnings() as $warning) {
