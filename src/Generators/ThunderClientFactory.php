@@ -4,7 +4,7 @@ namespace Langsys\OpenApiDocsGenerator\Generators;
 
 class ThunderClientFactory
 {
-    public static function make(string $documentation): ThunderClientGenerator
+    public static function make(string $documentation, bool $refresh = false, bool $wipe = false): ThunderClientGenerator
     {
         $config = ConfigFactory::documentationConfig($documentation);
         $tc = $config['thunder_client'] ?? [];
@@ -35,6 +35,8 @@ class ThunderClientFactory
             defaultHeaders: $tc['default_headers'] ?? [['name' => 'Accept', 'value' => 'application/json']],
             environmentConfig: $envConfig,
             environmentFile: $envFile,
+            refresh: $refresh,
+            wipe: $wipe,
         );
     }
 }
