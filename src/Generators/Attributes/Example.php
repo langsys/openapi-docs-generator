@@ -8,7 +8,7 @@ use Attribute;
 class Example extends OpenApiAttribute
 {
     public function __construct(
-        public string|int|bool $content,
+        public string|int|bool|float $content,
         public array $arguments = [],
     ) {
     }
