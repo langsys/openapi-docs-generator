@@ -13,6 +13,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [#\[Description\]](#description)
   - [#\[Omit\]](#omit)
   - [#\[GroupedCollection\]](#groupedcollection)
+  - [#\[ItemType\] / #\[OneOfItemsFrom\]](#itemtype--oneofitemsfrom)
 - [Supported Property Types](#supported-property-types)
   - [Enum Example](#enum-example)
   - [Nested Data Classes](#nested-data-classes)
@@ -226,6 +227,35 @@ Produces:
 ```
 
 When combined with a typed collection (via `@var` docblock or `#[DataCollectionOf]`), it produces a dictionary-of-arrays structure instead. See [Collections](#collections) for details.
+
+### `#[ItemType]` / `#[OneOfItemsFrom]`
+
+Declare a polymorphic array whose items can be one of several DTO variants — block-based content (Notion / Tiptap style), event envelopes, or any tagged-union payload.
+
+- `#[ItemType('group', ?handle)]` is applied to a Data **class**. It registers that class as a possible variant in a named group. The optional `handle` defaults to the snake-cased basename of the schema (with `Resource` / `Data` suffix stripped).
+- `#[OneOfItemsFrom('group')]` is applied to an array property. The generator emits the property as `array<oneOf<...>>` where each `oneOf` member is a generated wrapper schema named `{Variant}Item` with shape `{ type: <handle>, data: <Variant> }`.
+
+```php
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ItemType;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\OneOfItemsFrom;
+
+#[ItemType('blocks')] // handle inferred as "paragraph"
+class ParagraphResource extends Data { /* ... */ }
+
+#[ItemType('blocks', 'picture')] // handle overridden to "picture"
+class ImageResource extends Data { /* ... */ }
+
+class BlockContainerResource extends Data
+{
+    public function __construct(
+        public string $title,
+        #[OneOfItemsFrom('blocks')]
+        public array $content,
+    ) {}
+}
+```
+
+For each variant, the generator emits a wrapper schema (`ParagraphItem`, `ImageItem`) that the property's `oneOf` references. Abstract Data subclasses are skipped from auto-schema generation, so a shared `AbstractBlockResource` base will not produce its own schema.
 
 ## Supported Property Types
 

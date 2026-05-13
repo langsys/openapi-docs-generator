@@ -259,3 +259,91 @@ test('v3: DataCollection with DataCollectionOf still works (backward compat)', f
         ->and($prop->additionalProperties->type)->toBe('array')
         ->and($prop->additionalProperties->items->ref)->toBe('#/components/schemas/ExampleData');
 });
+
+// -------------------------------------------------------------------------
+// Properties with default values are not marked required (regardless of
+// nullability); nullable: true only fires for actually-nullable types.
+// -------------------------------------------------------------------------
+
+test('non-nullable property with default is omitted from required[] and not flagged nullable', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DefaultedRequest');
+
+    expect($schema)->not->toBeNull()
+        ->and($schema->required)->toBe(['name']);
+
+    $props = collect($schema->properties);
+
+    $status = $props->first(fn (OA\Property $p) => $p->property === 'status');
+    expect($status->default)->toBe('case1')
+        ->and($status->nullable)->toBe(Generator::UNDEFINED);
+
+    $active = $props->first(fn (OA\Property $p) => $p->property === 'active');
+    expect($active->default)->toBe(true)
+        ->and($active->nullable)->toBe(Generator::UNDEFINED);
+});
+
+// -------------------------------------------------------------------------
+// #[ItemType] / #[OneOfItemsFrom] — polymorphic arrays of DTO variants
+// -------------------------------------------------------------------------
+
+test('OneOfItemsFrom property emits an array of oneOf wrapper item schemas', function () {
+    $schemas = $this->builder->buildAll();
+    $container = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'BlockContainer');
+
+    expect($container)->not->toBeNull();
+
+    $contentProp = collect($container->properties)
+        ->first(fn (OA\Property $p) => $p->property === 'content');
+
+    expect($contentProp->type)->toBe('array')
+        ->and($contentProp->items)->toBeInstanceOf(OA\Items::class);
+
+    $oneOfRefs = array_map(fn (OA\Schema $s) => $s->ref, $contentProp->items->oneOf);
+
+    expect($oneOfRefs)->toEqualCanonicalizing([
+        '#/components/schemas/ImageItem',
+        '#/components/schemas/ParagraphItem',
+    ]);
+});
+
+test('ItemType emits a wrapper schema per variant with type/data shape', function () {
+    $schemas = $this->builder->buildAll();
+    $names = array_map(fn (OA\Schema $s) => $s->schema, $schemas);
+
+    expect($names)->toContain('ParagraphItem')
+        ->and($names)->toContain('ImageItem');
+
+    $paragraphItem = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'ParagraphItem');
+    expect($paragraphItem->required)->toBe(['type', 'data']);
+
+    $props = collect($paragraphItem->properties);
+    $typeProp = $props->first(fn (OA\Property $p) => $p->property === 'type');
+    expect($typeProp->type)->toBe('string')
+        ->and($typeProp->enum)->toBe(['paragraph'])
+        ->and($typeProp->example)->toBe('paragraph');
+
+    $dataProp = $props->first(fn (OA\Property $p) => $p->property === 'data');
+    expect($dataProp->allOf[0]->ref)->toBe('#/components/schemas/Paragraph');
+});
+
+test('ItemType handle defaults to snake_case of basename when omitted, custom handle wins when provided', function () {
+    $schemas = $this->builder->buildAll();
+
+    $paragraphItem = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'ParagraphItem');
+    $paragraphType = collect($paragraphItem->properties)
+        ->first(fn (OA\Property $p) => $p->property === 'type');
+    expect($paragraphType->enum)->toBe(['paragraph']);
+
+    $imageItem = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'ImageItem');
+    $imageType = collect($imageItem->properties)
+        ->first(fn (OA\Property $p) => $p->property === 'type');
+    expect($imageType->enum)->toBe(['picture']);
+});
+
+test('abstract Data subclasses are skipped from auto-schema generation', function () {
+    $schemas = $this->builder->buildAll();
+    $names = array_map(fn (OA\Schema $s) => $s->schema, $schemas);
+
+    expect($names)->not->toContain('AbstractBlock');
+});

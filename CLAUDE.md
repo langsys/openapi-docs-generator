@@ -58,10 +58,12 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 ### PHP Attributes (`Generators/Attributes/`)
 
 Custom attributes applied to Data class properties to control schema output:
-- `#[Example("value")]` — Explicit example value
+- `#[Example("value")]` — Explicit example value (string|int|bool|float)
 - `#[Description("text")]` — Property description
 - `#[Omit]` — Exclude from generated schema
-- `#[GroupedCollection]` — Nested grouped collection structure
+- `#[GroupedCollection("key")]` — Nested grouped collection structure
+- `#[ItemType("group", ?handle)]` — Class-level. Registers a Data class as a variant in a named oneOf group; handle defaults to snake_case basename
+- `#[OneOfItemsFrom("group")]` — Property-level on an `array`. Emits `array<oneOf<{Variant}Item>>` where each `{Variant}Item` wraps the variant as `{ type, data }`. Abstract Data subclasses are skipped from auto-schema generation.
 
 ### Endpoint Parameter Enrichment
 
@@ -77,7 +79,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (106 tests, 275 assertions).
+Tests use Pest with Orchestra Testbench (111 tests, 310 assertions).
 
 | Test File | What It Covers |
 |---|---|
