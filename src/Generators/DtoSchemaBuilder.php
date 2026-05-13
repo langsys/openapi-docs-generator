@@ -7,7 +7,9 @@ use Illuminate\Support\Collection;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\GroupedCollection;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ItemType;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Omit;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\OneOfItemsFrom;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\OpenApiAttribute;
 use OpenApi\Annotations as OA;
 use OpenApi\Generator as OpenApiGenerator;
@@ -36,6 +38,9 @@ class DtoSchemaBuilder
     /** @var string[] */
     private array $dtoPaths;
 
+    /** @var array<string, array<int, object>> */
+    private array $oneOfGroups = [];
+
     /**
      * @param string|string[] $dtoPaths Directories to scan for Data subclasses
      */
@@ -55,8 +60,10 @@ class DtoSchemaBuilder
     public function buildAll(): array
     {
         $schemas = [];
+        $classes = $this->discoverDtoClasses();
+        $this->oneOfGroups = $this->discoverOneOfGroups($classes);
 
-        foreach ($this->discoverDtoClasses() as $className) {
+        foreach ($classes as $className) {
             $schema = $this->buildSchema($className);
             if ($schema) {
                 $schemas[] = $schema;
@@ -66,6 +73,8 @@ class DtoSchemaBuilder
                 }
             }
         }
+
+        $schemas = array_merge($schemas, $this->buildOneOfItemSchemas());
 
         return $schemas;
     }
@@ -138,7 +147,7 @@ class DtoSchemaBuilder
         foreach ($finder->files()->name('*.php')->in($existingPaths) as $file) {
             $className = $this->extractClassName($file->getRealPath());
 
-            if ($className !== null && $this->isDataSubclass($className)) {
+            if ($className !== null && ! (new ReflectionClass($className))->isAbstract() && $this->isDataSubclass($className)) {
                 $classes[] = $className;
             }
         }
@@ -250,9 +259,11 @@ class DtoSchemaBuilder
             'description' => $attributes->description,
             'collectionOf' => $collectionOf,
             'groupedCollection' => $attributes->groupedCollection,
+            'oneOfItemsFrom' => $attributes->oneOfItemsFrom,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
-            'required' => !$type->allowsNull() && !$this->propertyDeclaresLaravelDataOptional($property),
+            'nullable' => $type->allowsNull(),
+            'required' => !$type->allowsNull() && !$this->propertyDeclaresLaravelDataOptional($property) && !$hasDefault,
         ];
     }
 
@@ -323,6 +334,7 @@ class DtoSchemaBuilder
             'description' => '',
             'collectionOf' => null,
             'groupedCollection' => null,
+            'oneOfItemsFrom' => null,
         ];
 
         foreach ($reflectionAttributes as $attr) {
@@ -337,6 +349,8 @@ class DtoSchemaBuilder
                 $result->description = $instance->content;
             } elseif ($instance instanceof GroupedCollection) {
                 $result->groupedCollection = $instance->content;
+            } elseif ($instance instanceof OneOfItemsFrom) {
+                $result->oneOfItemsFrom = $instance->group;
             } elseif ($instance instanceof DataCollectionOf) {
                 $result->collectionOf = $instance->class;
             }
@@ -440,6 +454,11 @@ class DtoSchemaBuilder
             return $this->buildNestedObjectProperty($meta);
         }
 
+        // Detect array/Collection items described by a named oneOf group
+        if ($typeName === 'array' && $meta->oneOfItemsFrom !== null) {
+            return $this->buildOneOfItemsProperty($meta);
+        }
+
         // v4: array/Collection with collectionOf resolved from docblock
         if ($typeName === 'array' && $meta->collectionOf !== null) {
             return $this->buildDataCollectionProperty($meta);
@@ -495,7 +514,7 @@ class DtoSchemaBuilder
             $props['default'] = $meta->defaultValue;
         }
 
-        if (!$meta->required) {
+        if ($meta->nullable) {
             $props['nullable'] = true;
         }
 
@@ -540,7 +559,7 @@ class DtoSchemaBuilder
             $props['default'] = null;
         }
 
-        if (!$meta->required) {
+        if ($meta->nullable) {
             $props['nullable'] = true;
         }
 
@@ -668,6 +687,33 @@ class DtoSchemaBuilder
     }
 
     /**
+     * Build an array property whose items can be one of several DTO-backed wrapper schemas.
+     */
+    private function buildOneOfItemsProperty(object $meta): OA\Property
+    {
+        $items = $this->oneOfGroups[$meta->oneOfItemsFrom] ?? [];
+
+        $props = [
+            'property' => $meta->name,
+            'type' => 'array',
+            'items' => new OA\Items([
+                'oneOf' => array_map(
+                    static fn (object $item): OA\Schema => new OA\Schema([
+                        'ref' => '#/components/schemas/' . $item->itemSchemaName,
+                    ]),
+                    $items,
+                ),
+            ]),
+        ];
+
+        if ($meta->description) {
+            $props['description'] = $meta->description;
+        }
+
+        return new OA\Property($props);
+    }
+
+    /**
      * Build a property for primitive types (string, int, bool, float).
      */
     private function buildPrimitiveProperty(object $meta): OA\Property
@@ -775,6 +821,78 @@ class DtoSchemaBuilder
             $this->buildPaginatedResponseSchema($baseName, $resourceSchema),
             $this->buildListResponseSchema($baseName, $resourceSchema),
         ];
+    }
+
+    /**
+     * Discover DTO classes tagged as possible items for named oneOf groups.
+     *
+     * @param string[] $classes
+     * @return array<string, array<int, object>>
+     */
+    private function discoverOneOfGroups(array $classes): array
+    {
+        $groups = [];
+
+        foreach ($classes as $className) {
+            $reflection = new ReflectionClass($className);
+
+            foreach ($reflection->getAttributes(ItemType::class) as $attribute) {
+                /** @var ItemType $itemType */
+                $itemType = $attribute->newInstance();
+                $schemaName = $this->resolveSchemaName($className);
+
+                $groups[$itemType->group][] = (object) [
+                    'className' => $className,
+                    'schemaName' => $schemaName,
+                    'itemSchemaName' => $this->inferItemSchemaName($schemaName),
+                    'handle' => $itemType->handle ?? $this->inferItemHandle($schemaName),
+                ];
+            }
+        }
+
+        foreach ($groups as &$items) {
+            usort(
+                $items,
+                static fn (object $a, object $b): int => $a->handle <=> $b->handle,
+            );
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @return OA\Schema[]
+     */
+    private function buildOneOfItemSchemas(): array
+    {
+        $schemas = [];
+
+        foreach ($this->oneOfGroups as $items) {
+            foreach ($items as $item) {
+                $schemas[] = new OA\Schema([
+                    'schema' => $item->itemSchemaName,
+                    'type' => 'object',
+                    'required' => ['type', 'data'],
+                    'properties' => [
+                        new OA\Property([
+                            'property' => 'type',
+                            'type' => 'string',
+                            'enum' => [$item->handle],
+                            'example' => $item->handle,
+                        ]),
+                        new OA\Property([
+                            'property' => 'data',
+                            'description' => 'Item payload',
+                            'allOf' => [
+                                new OA\Schema(['ref' => '#/components/schemas/' . $item->schemaName]),
+                            ],
+                        ]),
+                    ],
+                ]);
+            }
+        }
+
+        return $schemas;
     }
 
     /**
@@ -974,5 +1092,29 @@ class DtoSchemaBuilder
             'array' => 'array',
             default => 'string',
         };
+    }
+
+    private function inferItemSchemaName(string $schemaName): string
+    {
+        foreach (['Resource', 'Data'] as $suffix) {
+            if (str_ends_with($schemaName, $suffix)) {
+                $schemaName = substr($schemaName, 0, -strlen($suffix));
+                break;
+            }
+        }
+
+        return $schemaName . 'Item';
+    }
+
+    private function inferItemHandle(string $schemaName): string
+    {
+        foreach (['Resource', 'Data'] as $suffix) {
+            if (str_ends_with($schemaName, $suffix)) {
+                $schemaName = substr($schemaName, 0, -strlen($suffix));
+                break;
+            }
+        }
+
+        return strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $schemaName));
     }
 }
