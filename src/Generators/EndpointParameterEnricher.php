@@ -392,7 +392,7 @@ class EndpointParameterEnricher
             . "- `field:value`          equality (strict type match)\n"
             . "- `field:null`           field is null\n"
             . "- `field:!null`          field is not null\n"
-            . "- `field:<op>:value`     comparison (op ∈ `>`, `<`, `>=`, `<=`) — numeric fields, plus `_at`/`_date` fields which accept both unix timestamps and date strings (e.g. `2026-01-01`)\n\n"
+            . "- `field:<op>:value`     comparison (op ∈ `>`, `<`, `>=`, `<=`) — numeric fields; date comparison also supported when value is `YYYY-MM-DD` (e.g. `2026-01-01`)\n\n"
             . 'Multiple filters: `filter_by[]=field1:value&filter_by[]=field2:value`';
 
         if (! empty($filterableFields)) {
