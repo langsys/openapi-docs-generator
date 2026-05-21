@@ -108,6 +108,42 @@ test('it replaces filter_by ref parameter with inline parameter', function () {
         ->and($param->example)->toBe('status:active');
 });
 
+test('order_by description omits Default order line when there is no default', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectListResponse', ['order_by']);
+
+    $data = new EndpointParameterData(
+        orderableFields: ['title'],
+        defaultOrder: [],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->not->toContain('**Default order:**')
+        ->and($description)->not->toContain('none');
+});
+
+test('filter_by description omits Default filters line when there is no default', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectListResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(
+        filterableFields: ['status'],
+        defaultFilters: [],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->not->toContain('**Default filters:**')
+        ->and($description)->not->toContain('none');
+});
+
 test('it replaces both order_by and filter_by ref parameters', function () {
     $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['order_by', 'filter_by']);
 
