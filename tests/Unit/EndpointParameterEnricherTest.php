@@ -279,7 +279,9 @@ test('filter_by description lists all supported operators', function () {
         ->and($description)->toContain('comparison')
         ->and($description)->toContain('>=')
         ->and($description)->toContain('<=')
-        ->and($description)->toContain('numeric fields only')
+        ->and($description)->toContain('numeric fields')
+        ->and($description)->toContain('`_at`/`_date` fields')
+        ->and($description)->toContain('unix timestamps and date strings')
         ->and($description)->toContain('Multiple filters:');
 });
 

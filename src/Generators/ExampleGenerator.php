@@ -24,44 +24,38 @@ class ExampleGenerator
     }
 
 
-    public function __call($name, $arguments): string|int
+    public function __call($name, $arguments): string|int|float|bool
     {
         [$arguments] = $arguments;
         $propertyType = $arguments['type'] ?? 'string';
 
-        $function = $this->_getExampleFunction($name, $propertyType);
-
-        // If $function is a string, handle it as a method on this class or a Faker method
-        if (is_string($function) && isset($this->customFunctions[$function])) {
-            [$class] = $this->customFunctions[$function];
-            return app($class)->$function(...array_values($arguments));
-        }
+        $function = $this->_getExampleFunction($name);
 
         try {
-            unset($arguments['type']);
-            $camelCaseName = Str::camel($function);
-
-            $example = $this->faker->$camelCaseName(...$arguments);
-            $example = is_array($example) ? array_pop($example) : $example;
-
-            return str_replace(["'", '"'], [self::SINGLE_QUOTE_IDENTIFIER, ''], $example);
-        } catch (\Exception $e) {
-            return $propertyType === 'int' ? 0 : '';
+            if (is_string($function) && isset($this->customFunctions[$function])) {
+                [$class] = $this->customFunctions[$function];
+                $example = app($class)->$function(...array_values($arguments));
+            } else {
+                unset($arguments['type']);
+                $example = $this->faker->{Str::camel($function)}(...$arguments);
+                $example = is_array($example) ? array_pop($example) : $example;
+                if (is_string($example)) {
+                    $example = str_replace(["'", '"'], [self::SINGLE_QUOTE_IDENTIFIER, ''], $example);
+                }
+            }
+        } catch (\Exception) {
+            return $this->_defaultFor($propertyType);
         }
+
+        return $this->_matchesPropertyType($example, $propertyType)
+            ? $example
+            : $this->_defaultFor($propertyType);
     }
 
-    private function _getExampleFunction(string $name, string $propertyType = 'string'): string
+    private function _getExampleFunction(string $name): string
     {
-        // Fallback to default function handling
         if (str_starts_with($name, self::FAKER_FUNCTION_PREFIX)) {
-            $functionName = str_replace(self::FAKER_FUNCTION_PREFIX, '', $name);
-            return $functionName;
-        }
-
-        // Only apply string-producing fakers to string properties — avoid polluting
-        // booleans, integers, etc. with mismatched types.
-        if ($propertyType !== 'string') {
-            return $name;
+            return str_replace(self::FAKER_FUNCTION_PREFIX, '', $name);
         }
 
         // Match hints as whole words (underscore-delimited) or suffixes.
@@ -75,8 +69,7 @@ class ExampleGenerator
                 continue;
             }
 
-            $segments = explode('_', $name);
-            if (in_array($hint, $segments, true)) {
+            if (in_array($hint, explode('_', $name), true)) {
                 return $function;
             }
         }
@@ -84,12 +77,23 @@ class ExampleGenerator
         return $name;
     }
 
-
-    private function isCustomFunction($function): bool
+    private function _matchesPropertyType(mixed $value, string $propertyType): bool
     {
-        //Is array and exists in the config file,
-        return is_array($function) && count($function) === 2 && array_key_exists($function[1], $this->customFunctions);
+        return match ($propertyType) {
+            'int'    => is_int($value),
+            'float'  => is_float($value) || is_int($value),
+            'bool'   => is_bool($value),
+            default  => is_string($value),
+        };
     }
 
-
+    private function _defaultFor(string $propertyType): string|int|float|bool
+    {
+        return match ($propertyType) {
+            'int'    => 0,
+            'float'  => 0.0,
+            'bool'   => false,
+            default  => '',
+        };
+    }
 }
