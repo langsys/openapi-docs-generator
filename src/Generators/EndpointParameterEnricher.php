@@ -368,8 +368,6 @@ class EndpointParameterEnricher
                 $defaultOrder
             ));
             $description .= "\n\n**Default order:** `{$defaultList}`";
-        } else {
-            $description .= "\n\n**Default order:** none";
         }
 
         return $description;
@@ -432,8 +430,6 @@ class EndpointParameterEnricher
                 $defaultFilters
             ));
             $description .= "\n\n**Default filters:** `{$defaultList}`";
-        } else {
-            $description .= "\n\n**Default filters:** none";
         }
 
         return $description;
