@@ -242,7 +242,11 @@ class OpenApiGenerator
         $resolverClass = $this->endpointParametersConfig['resolver']
             ?? \Langsys\OpenApiDocsGenerator\Resolvers\DatabaseEndpointParameterResolver::class;
 
-        $resolver = new $resolverClass();
+        $fieldTypesResolver = $this->endpointParametersConfig['field_types_resolver'] ?? null;
+
+        $resolver = $fieldTypesResolver !== null && is_callable($fieldTypesResolver)
+            ? new $resolverClass($fieldTypesResolver)
+            : new $resolverClass();
 
         $enricher = new EndpointParameterEnricher(
             resolver: $resolver,

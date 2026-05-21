@@ -69,7 +69,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 - **Contracts\EndpointParameterResolver** — Interface for resolving endpoint-specific parameter metadata.
 - **Resolvers\DatabaseEndpointParameterResolver** — Default implementation reading from `api_resources` database tables.
-- **Data\EndpointParameterData** — DTO holding orderable/filterable field lists and defaults.
+- **Data\EndpointParameterData** — DTO holding orderable/filterable field lists, defaults, and optional per-field `fieldTypes` (`array<string, array{type, nullable}>`) used to emit per-operator capability hints in the filter_by description.
 
 ### Laravel Integration
 
@@ -79,7 +79,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (111 tests, 310 assertions).
+Tests use Pest with Orchestra Testbench (120 tests, 338 assertions).
 
 | Test File | What It Covers |
 |---|---|

@@ -261,6 +261,122 @@ test('it includes vendor extensions when enabled', function () {
         ->and($param->x)->toHaveKey('default-order');
 });
 
+test('filter_by description lists all supported operators', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(filterableFields: ['status']);
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->toContain('Operators:')
+        ->and($description)->toContain('field:value')
+        ->and($description)->toContain('field:null')
+        ->and($description)->toContain('field:!null')
+        ->and($description)->toContain('comparison')
+        ->and($description)->toContain('>=')
+        ->and($description)->toContain('<=')
+        ->and($description)->toContain('numeric fields only')
+        ->and($description)->toContain('Multiple filters:');
+});
+
+test('filter_by description adds per-field operator hints when fieldTypes are populated', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(
+        filterableFields: ['description', 'amount', 'last_used_at', 'status'],
+        fieldTypes: [
+            'description' => ['type' => 'string', 'nullable' => true],
+            'amount' => ['type' => 'int', 'nullable' => false],
+            'last_used_at' => ['type' => 'string', 'nullable' => true],
+            'status' => ['type' => 'string', 'nullable' => false],
+        ],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->toContain('**Supports null check')
+        ->and($description)->toContain('`description`, `last_used_at`')
+        ->and($description)->toContain('**Supports comparison')
+        ->and($description)->toContain('`amount`');
+});
+
+test('filter_by description omits comparison line when no numeric fields', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(
+        filterableFields: ['status', 'description'],
+        fieldTypes: [
+            'status' => ['type' => 'string', 'nullable' => false],
+            'description' => ['type' => 'string', 'nullable' => true],
+        ],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->toContain('**Supports null check')
+        ->and($description)->not->toContain('**Supports comparison');
+});
+
+test('filter_by description omits both per-field lines when fieldTypes is empty', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(
+        filterableFields: ['status'],
+        fieldTypes: [],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    expect($description)->not->toContain('**Supports null check')
+        ->and($description)->not->toContain('**Supports comparison')
+        ->and($description)->toContain('**Filterable fields:**');
+});
+
+test('filter_by description excludes fields that are filterable but missing from fieldTypes', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']);
+
+    $data = new EndpointParameterData(
+        filterableFields: ['amount', 'orphan_field'],
+        fieldTypes: [
+            'amount' => ['type' => 'int', 'nullable' => true],
+            // orphan_field intentionally omitted — misconfigured filterable row
+        ],
+    );
+
+    $resolver = buildMockResolver($data);
+    $enricher = new EndpointParameterEnricher(resolver: $resolver);
+    $enricher->enrich($openapi);
+
+    $description = $openapi->paths[0]->get->parameters[0]->description;
+
+    // Extract just the per-field operator lines so we don't confuse them with the Filterable fields line.
+    expect($description)->toContain('**Filterable fields:** `amount`, `orphan_field`');
+
+    preg_match('/\*\*Supports null check[^\n]*/', $description, $nullLine);
+    preg_match('/\*\*Supports comparison[^\n]*/', $description, $compLine);
+
+    expect($nullLine[0] ?? '')->toContain('`amount`')
+        ->and($nullLine[0] ?? '')->not->toContain('orphan_field')
+        ->and($compLine[0] ?? '')->toContain('`amount`')
+        ->and($compLine[0] ?? '')->not->toContain('orphan_field');
+});
+
 test('it does nothing when openapi has no paths', function () {
     $openapi = new OA\OpenApi([
         'info' => new OA\Info(['title' => 'Test', 'version' => '1.0']),
