@@ -22,6 +22,23 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
     private bool $warningLogged = false;
 
     /**
+     * Optional callable that returns per-field type info for a resource.
+     *
+     * Signature: fn(string $resourceName): array<string, array{type: string, nullable: bool}>
+     *
+     * When provided and returns a non-empty array, the result is attached to
+     * EndpointParameterData->fieldTypes for per-operator description hints.
+     *
+     * @var (callable(string): array<string, array{type: string, nullable: bool}>)|null
+     */
+    private $fieldTypesResolver;
+
+    public function __construct(?callable $fieldTypesResolver = null)
+    {
+        $this->fieldTypesResolver = $fieldTypesResolver;
+    }
+
+    /**
      * Resolve endpoint parameter data from the database.
      *
      * Uses a two-tier lookup:
@@ -49,7 +66,45 @@ class DatabaseEndpointParameterResolver implements EndpointParameterResolver
             defaultOrder: $this->getDefaultOrder($resourceId),
             filterableFields: $this->getFilterableFields($resourceId),
             defaultFilters: $this->getDefaultFilters($resourceId),
+            fieldTypes: $this->resolveFieldTypes($resourceName),
         );
+    }
+
+    /**
+     * Invoke the configured field types resolver, if any.
+     *
+     * @return array<string, array{type: string, nullable: bool}>
+     */
+    private function resolveFieldTypes(string $resourceName): array
+    {
+        if ($this->fieldTypesResolver === null) {
+            return [];
+        }
+
+        $result = ($this->fieldTypesResolver)($resourceName);
+
+        if (! is_array($result)) {
+            throw new \UnexpectedValueException(
+                'endpoint_parameters.field_types_resolver must return an array, got '
+                . get_debug_type($result) . " for resource '{$resourceName}'."
+            );
+        }
+
+        foreach ($result as $field => $info) {
+            if (! is_string($field)
+                || ! is_array($info)
+                || ! isset($info['type'], $info['nullable'])
+                || ! is_string($info['type'])
+                || ! is_bool($info['nullable'])
+            ) {
+                throw new \UnexpectedValueException(
+                    "endpoint_parameters.field_types_resolver returned an invalid entry "
+                    . "for resource '{$resourceName}'. Expected array<string, array{type: string, nullable: bool}>."
+                );
+            }
+        }
+
+        return $result;
     }
 
     /**

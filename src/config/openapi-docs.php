@@ -135,8 +135,16 @@ return [
         // Set 'enabled' => true to enrich order_by/filter_by query parameters
         // with endpoint-specific field lists from the database.
         // Requires api_resources tables. Endpoints without DB data keep their generic $refs.
+        //
+        // 'field_types_resolver' (optional) is a callable that takes a resource name
+        // and returns array<string, array{type: string, nullable: bool}>. When set,
+        // the generated filter_by description calls out which fields support
+        // null/!null and which support comparison operators (>, <, >=, <=).
+        // Example: fn (string $resource) => app(App\Services\ApiResourceService::class)
+        //              ->getFieldTypesForResource($resource),
         'endpoint_parameters' => [
             'enabled' => false,
+            // 'field_types_resolver' => null,
         ],
 
         // --- Thunder Client Collection Generation ---

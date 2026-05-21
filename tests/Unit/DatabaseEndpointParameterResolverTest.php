@@ -196,6 +196,67 @@ test('it resolves default filters', function () {
     ]);
 });
 
+test('it invokes the field_types_resolver callable and attaches fieldTypes', function () {
+    DB::table('api_resources')->insert([
+        'name' => 'ProjectResource',
+        'endpoint' => null,
+    ]);
+
+    $captured = null;
+    $resolver = new DatabaseEndpointParameterResolver(function (string $resourceName) use (&$captured): array {
+        $captured = $resourceName;
+        return [
+            'amount' => ['type' => 'int', 'nullable' => true],
+            'title' => ['type' => 'string', 'nullable' => false],
+        ];
+    });
+
+    $result = $resolver->resolve('api/projects', 'ProjectResource');
+
+    expect($captured)->toBe('ProjectResource')
+        ->and($result->fieldTypes)->toBe([
+            'amount' => ['type' => 'int', 'nullable' => true],
+            'title' => ['type' => 'string', 'nullable' => false],
+        ]);
+});
+
+test('it defaults fieldTypes to empty array when no callable is provided', function () {
+    DB::table('api_resources')->insert([
+        'name' => 'ProjectResource',
+        'endpoint' => null,
+    ]);
+
+    $result = $this->resolver->resolve('api/projects', 'ProjectResource');
+
+    expect($result->fieldTypes)->toBe([]);
+});
+
+test('it throws when field_types_resolver returns a non-array', function () {
+    DB::table('api_resources')->insert([
+        'name' => 'ProjectResource',
+        'endpoint' => null,
+    ]);
+
+    $resolver = new DatabaseEndpointParameterResolver(fn (string $r) => 'not-an-array');
+
+    expect(fn () => $resolver->resolve('api/projects', 'ProjectResource'))
+        ->toThrow(\UnexpectedValueException::class);
+});
+
+test('it throws when field_types_resolver returns an entry with the wrong shape', function () {
+    DB::table('api_resources')->insert([
+        'name' => 'ProjectResource',
+        'endpoint' => null,
+    ]);
+
+    $resolver = new DatabaseEndpointParameterResolver(fn (string $r) => [
+        'amount' => ['type' => 'int'], // missing 'nullable'
+    ]);
+
+    expect(fn () => $resolver->resolve('api/projects', 'ProjectResource'))
+        ->toThrow(\UnexpectedValueException::class);
+});
+
 test('it returns empty arrays when resource has no fields configured', function () {
     DB::table('api_resources')->insert([
         'name' => 'EmptyResource',

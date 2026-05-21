@@ -310,7 +310,11 @@ class EndpointParameterEnricher
      */
     private function buildFilterByParameter(EndpointParameterData $data): OA\Parameter
     {
-        $description = $this->buildFilterByDescription($data->filterableFields, $data->defaultFilters);
+        $description = $this->buildFilterByDescription(
+            $data->filterableFields,
+            $data->defaultFilters,
+            $data->fieldTypes,
+        );
         $example = $this->buildFilterByExample($data->defaultFilters, $data->filterableFields);
 
         $properties = [
@@ -373,16 +377,53 @@ class EndpointParameterEnricher
 
     /**
      * Build the description string for a filter_by parameter.
+     *
+     * @param  array<string>  $filterableFields
+     * @param  array<array{0: string, 1: string}>  $defaultFilters
+     * @param  array<string, array{type: string, nullable: bool}>  $fieldTypes
      */
-    private function buildFilterByDescription(array $filterableFields, array $defaultFilters): string
-    {
-        $description = 'Filter results by field values. '
-            . 'Supports single filter (filter_by=field:value) '
-            . 'or multiple filters (filter_by[]=field1:value&filter_by[]=field2:value).';
+    private function buildFilterByDescription(
+        array $filterableFields,
+        array $defaultFilters,
+        array $fieldTypes = [],
+    ): string {
+        $description = "Filter results by field values.\n\n"
+            . "Operators:\n"
+            . "- `field:value`          equality (strict type match)\n"
+            . "- `field:null`           field is null\n"
+            . "- `field:!null`          field is not null\n"
+            . "- `field:<op>:value`     comparison (op ∈ `>`, `<`, `>=`, `<=`) — numeric fields only\n\n"
+            . 'Multiple filters: `filter_by[]=field1:value&filter_by[]=field2:value`';
 
         if (! empty($filterableFields)) {
             $fieldList = implode('`, `', $filterableFields);
             $description .= "\n\n**Filterable fields:** `{$fieldList}`";
+        }
+
+        if (! empty($fieldTypes)) {
+            $nullableFields = array_values(array_filter(
+                $filterableFields,
+                fn (string $field) => ($fieldTypes[$field]['nullable'] ?? false) === true,
+            ));
+
+            $comparisonFields = array_values(array_filter(
+                $filterableFields,
+                fn (string $field) => in_array(
+                    $fieldTypes[$field]['type'] ?? null,
+                    ['int', 'float'],
+                    true,
+                ),
+            ));
+
+            if (! empty($nullableFields)) {
+                $description .= "\n\n**Supports null check (`field:null` / `field:!null`):** `"
+                    . implode('`, `', $nullableFields) . '`';
+            }
+
+            if (! empty($comparisonFields)) {
+                $description .= "\n\n**Supports comparison (`>`, `<`, `>=`, `<=`):** `"
+                    . implode('`, `', $comparisonFields) . '`';
+            }
         }
 
         if (! empty($defaultFilters)) {
