@@ -2,6 +2,7 @@
 
 namespace Langsys\OpenApiDocsGenerator\Generators;
 
+use Langsys\OpenApiDocsGenerator\Data\SelectionReport;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use OpenApi\Annotations as OA;
 use OpenApi\Generator;
@@ -13,8 +14,20 @@ class OpenApiGenerator
 {
     public const OPEN_API_DEFAULT_SPEC_VERSION = '3.0.0';
 
+    private const OPERATION_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace'];
+
     private OA\OpenApi $openApi;
 
+    private ?SelectionReport $selectionReport = null;
+
+    /**
+     * @param  OperationSelector|null  $operationSelector  When set, filters the document to a documentation set.
+     * @param  array<int, array<string, mixed>>|null  $securityOverride  Per-operation security requirement to force
+     *                                                                    (e.g. [['apiKey' => []]]), or null to leave untouched.
+     * @param  bool  $pruneComponents  Remove components/tags not reachable from the surviving operations.
+     *                                 On by default so no generated document ships unused schemas; a filtered
+     *                                 set always prunes regardless (see GeneratorFactory).
+     */
     public function __construct(
         private array $annotationsDir,
         private string $docsFile,
@@ -28,7 +41,18 @@ class OpenApiGenerator
         private array $endpointParametersConfig,
         private DtoSchemaBuilder $dtoSchemaBuilder,
         private ?LoggerInterface $logger = null,
+        private ?OperationSelector $operationSelector = null,
+        private ?array $securityOverride = null,
+        private bool $pruneComponents = true,
     ) {}
+
+    /**
+     * The report from the last operation-selection pass, or null if no filter ran.
+     */
+    public function getSelectionReport(): ?SelectionReport
+    {
+        return $this->selectionReport;
+    }
 
     /**
      * Run the full generation pipeline.
@@ -40,12 +64,68 @@ class OpenApiGenerator
         $this->prepareDirectory();
         $this->defineConstants();
         $this->scanFilesForDocumentation();
+        $this->selectOperations();
+        $this->applySecurityOverride();
         $this->buildAndMergeDtoSchemas();
-        $this->populateServers();
         $this->enrichEndpointParameters();
+        $this->pruneComponentsAndTags();
+        $this->populateServers();
         $this->saveJson();
         $this->injectSecurity();
         $this->makeYamlCopy();
+    }
+
+    /**
+     * Filter the document to a documentation set (operations + a selection report).
+     */
+    private function selectOperations(): void
+    {
+        if ($this->operationSelector === null) {
+            return;
+        }
+
+        $this->selectionReport = $this->operationSelector->select($this->openApi);
+    }
+
+    /**
+     * Force the configured security requirement onto every surviving operation.
+     *
+     * Used by filtered sets to keep the displayed auth consistent with the
+     * ground-truth filter (e.g. an api-key set shows only apiKey), instead of
+     * rendering drifted hand-written security annotations.
+     */
+    private function applySecurityOverride(): void
+    {
+        if ($this->securityOverride === null || $this->securityOverride === []) {
+            return;
+        }
+
+        if ($this->openApi->paths === Generator::UNDEFINED || ! is_array($this->openApi->paths)) {
+            return;
+        }
+
+        foreach ($this->openApi->paths as $pathItem) {
+            foreach (self::OPERATION_METHODS as $method) {
+                $operation = $pathItem->{$method};
+                if ($operation === Generator::UNDEFINED) {
+                    continue;
+                }
+
+                $operation->security = $this->securityOverride;
+            }
+        }
+    }
+
+    /**
+     * Remove components and tags not reachable from the surviving operations.
+     */
+    private function pruneComponentsAndTags(): void
+    {
+        if (! $this->pruneComponents) {
+            return;
+        }
+
+        (new ComponentTagPruner())->prune($this->openApi);
     }
 
     /**
@@ -270,16 +350,49 @@ class OpenApiGenerator
      */
     private function injectSecurity(): void
     {
-        if (empty($this->securitySchemesConfig) && empty($this->securityConfig)) {
+        $schemesConfig = $this->securitySchemesConfig;
+        $securityConfig = $this->securityConfig;
+
+        // When a security override is in effect, the set advertises only the
+        // override's schemes: drive the global requirement from the override and
+        // restrict injected schemes to the ones it names (so we don't advertise,
+        // e.g., bearerAuth the set never uses).
+        if ($this->securityOverride !== null && $this->securityOverride !== []) {
+            $allowed = array_flip($this->securityOverrideSchemeNames());
+            $schemesConfig = array_intersect_key($schemesConfig, $allowed);
+            $securityConfig = $this->securityOverride;
+        }
+
+        if (empty($schemesConfig) && empty($securityConfig)) {
             return;
         }
 
         $security = new SecurityDefinitions(
-            securitySchemesConfig: $this->securitySchemesConfig,
-            securityConfig: $this->securityConfig,
+            securitySchemesConfig: $schemesConfig,
+            securityConfig: $securityConfig,
         );
 
         $security->generate($this->docsFile);
+    }
+
+    /**
+     * The distinct security-scheme names referenced by the configured override.
+     *
+     * @return array<int, string>
+     */
+    private function securityOverrideSchemeNames(): array
+    {
+        $names = [];
+
+        foreach ($this->securityOverride ?? [] as $requirement) {
+            if (is_array($requirement)) {
+                foreach (array_keys($requirement) as $name) {
+                    $names[(string) $name] = true;
+                }
+            }
+        }
+
+        return array_keys($names);
     }
 
     /**

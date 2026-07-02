@@ -27,6 +27,8 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
 - [Artisan Commands](#artisan-commands)
 - [Configuration Reference](#configuration-reference)
   - [Multiple Documentation Sets](#multiple-documentation-sets)
+  - [Filtered Documentation Sets](#filtered-documentation-sets)
+  - [Clean Output (Automatic Pruning)](#clean-output-automatic-pruning)
   - [Output Paths](#output-paths)
   - [Security Definitions](#security-definitions)
   - [YAML Output](#yaml-output)
@@ -54,7 +56,9 @@ php artisan openapi:generate
   |
   +-- Scan controller annotations (zircote/swagger-php)
   +-- Reflect on Spatie Data DTOs -> build OpenAPI Schema objects in memory
+  +-- (Filtered sets) Select operations by their route's middleware
   +-- Merge DTO schemas into the OpenAPI model
+  +-- Prune components/tags nothing references (clean output)
   +-- Inject security definitions from config
   +-- Write api-docs.json / api-docs.yaml
 ```
@@ -744,6 +748,109 @@ Useful for API versioning or separating public/internal APIs. Each documentation
 The `annotations` directories are scanned for both controller annotations **and** Data subclasses — one config, one scan.
 
 Generate a specific set with `php artisan openapi:generate v2`, or all sets with `--all`.
+
+### Filtered Documentation Sets
+
+A documentation set can emit only a **subset** of your API — for example an `integration` spec containing just the endpoints an API key can call. Selection is correct by construction: only the chosen operations, and the schemas, parameters and tags they reference, are emitted.
+
+Operations are matched to their Laravel route and selected by a pluggable filter. The default discriminator is **route middleware** — ground truth, unlike hand-written `security` annotations, which drift from what your routes actually enforce.
+
+```php
+'documentations' => [
+    'integration' => [
+        'paths'  => ['docs_json' => 'api-docs-integration.json'],
+        'filter' => [
+            'include' => [
+                ['middleware' => 'auth.apikey'],
+            ],
+        ],
+        'security_override' => [['apiKey' => []]],
+    ],
+],
+```
+
+Generate it with `php artisan openapi:generate integration` (or `--all`). The command prints a summary so you can eyeball the result:
+
+```
+Filtered set 'integration': kept 16, dropped 133 operation(s).
+```
+
+#### How operations are matched
+
+Each documented operation is resolved to its Laravel route **action-first**: the controller action (e.g. `App\Http\Controllers\ProjectController@index`) maps exactly to the route, which avoids brittle path-string matching. If an operation has no controller action (closure routes, hand-written path-only annotations), it falls back to matching the HTTP method + path signature — parameter names are ignored, so a documented `/projects/{id}` still matches a `/projects/{project}` route.
+
+The filter then inspects the route's **fully-resolved middleware** (route groups expanded, aliases resolved to their classes), so `['middleware' => 'auth.apikey']` matches whether the middleware was attached directly, via a group, by alias, or by class name.
+
+#### Filter descriptors
+
+`include` and `exclude` are lists of descriptors. An operation is kept when it matches **any** `include` descriptor and **no** `exclude` descriptor. An empty (or absent) `include` means "all operations are candidates".
+
+| Descriptor | Matches |
+|---|---|
+| `['middleware' => 'auth.apikey']` | operations whose route has the middleware (alias or FQCN; add `'match' => 'all'` to require every item of a list) |
+| `['tag' => 'Public']` | operations carrying the tag |
+| `['path' => 'webhooks/*']` | operations whose path matches the glob |
+| `['operationId' => 'listProjects']` | operations with the operationId |
+| `['class' => App\Docs\MyFilter::class, 'args' => []]` | a custom filter (see below) |
+
+```php
+'filter' => [
+    'include' => [ ['middleware' => 'auth.apikey'] ],
+    'exclude' => [ ['tag' => 'Internal'] ],
+
+    // What to do with operations that can't be matched to a route:
+    // 'exclude' (default) or 'include'.
+    'unmatched' => 'exclude',
+],
+```
+
+Operations that can't be matched to any route are reported and, by default, excluded — an operation with no known route can't be proven to satisfy a middleware filter. `openapi:generate` lists any such operations, so annotation-vs-route drift is never silent.
+
+#### Consistent auth display (`security_override`)
+
+Because a filtered set is matched by real middleware, its operations should display the matching auth — not whatever `security` annotation happens to be written on them. `security_override` forces the security requirement on every surviving operation, sets the global requirement, and restricts `components/securitySchemes` to only the schemes it names:
+
+```php
+'security_override' => [['apiKey' => []]],
+```
+
+The `integration` spec above then shows `apiKey` on every operation and advertises only the `apiKey` scheme — even if the controllers were annotated with `bearerAuth`.
+
+#### Custom filters
+
+Implement `Langsys\OpenApiDocsGenerator\Contracts\OperationFilter`:
+
+```php
+use Langsys\OpenApiDocsGenerator\Contracts\OperationFilter;
+use Langsys\OpenApiDocsGenerator\Data\OperationContext;
+
+class DeprecatedFilter implements OperationFilter
+{
+    public function matches(OperationContext $context): bool
+    {
+        return $context->operation->deprecated === true;
+    }
+}
+```
+
+`OperationContext` carries the operation, its path and HTTP method, and the resolved route — `$context->route?->middleware()` gives the fully-resolved middleware list — so a custom filter can match on anything. Wire it up with `['class' => DeprecatedFilter::class]`.
+
+### Clean Output (Automatic Pruning)
+
+Every generated document is **pruned** to only the schemas, parameters, responses, security schemes and tags reachable from its operations — so a spec never carries schemas nothing references. This is on by default for all sets (and always on for filtered sets).
+
+To keep every discovered DTO schema in a set even when nothing references it, opt out per set:
+
+```php
+'documentations' => [
+    'catalog' => [
+        'paths' => ['docs_json' => 'catalog.json'],
+        'prune_unused_components' => false,   // keep all schemas
+    ],
+],
+```
+
+> **Upgrade note (v2.6.0):** previously every discovered DTO appeared in the spec. Now a DTO that no documented operation references is pruned from the output. Set `prune_unused_components => false` on a set to restore the old "include everything" behavior.
 
 ### Output Paths
 

@@ -5,6 +5,7 @@ namespace Langsys\OpenApiDocsGenerator\Console\Commands;
 use Illuminate\Console\Command;
 use Langsys\OpenApiDocsGenerator\Generators\ConfigFactory;
 use Langsys\OpenApiDocsGenerator\Generators\GeneratorFactory;
+use Langsys\OpenApiDocsGenerator\Generators\OpenApiGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\ProcessorTagSynchronizer;
 use Langsys\OpenApiDocsGenerator\Generators\ThunderClientFactory;
 
@@ -35,8 +36,11 @@ class GenerateCommand extends Command
         $this->info("Generating OpenAPI documentation for '{$documentation}'...");
 
         try {
-            GeneratorFactory::make($documentation)->generateDocs();
+            $generator = GeneratorFactory::make($documentation);
+            $generator->generateDocs();
             $this->info("Documentation '{$documentation}' generated successfully.");
+
+            $this->reportSelection($documentation, $generator);
 
             $this->synchronizeProcessorTags($documentation);
 
@@ -56,6 +60,38 @@ class GenerateCommand extends Command
             }
         } catch (\Throwable $e) {
             $this->error("Failed to generate '{$documentation}': {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Print a loud, always-on summary of a filtered set's operation selection.
+     */
+    private function reportSelection(string $documentation, OpenApiGenerator $generator): void
+    {
+        $report = $generator->getSelectionReport();
+
+        if ($report === null) {
+            return;
+        }
+
+        $counts = $report->counts();
+
+        $this->info(sprintf(
+            "Filtered set '%s': kept %d, dropped %d operation(s).",
+            $documentation,
+            $counts['kept'],
+            $counts['dropped'],
+        ));
+
+        if ($counts['unmatched'] > 0) {
+            $this->warn(sprintf(
+                '%d operation(s) could not be matched to a route (see policy for disposition):',
+                $counts['unmatched'],
+            ));
+
+            foreach ($report->unmatched as $entry) {
+                $this->warn(sprintf('  - %s %s', strtoupper($entry['method']), $entry['path']));
+            }
         }
     }
 

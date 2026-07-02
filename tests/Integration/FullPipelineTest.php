@@ -25,6 +25,7 @@ function makeGenerator(
     array $security = [],
     ?string $basePath = null,
     bool $yamlCopy = false,
+    bool $pruneComponents = true,
 ): OpenApiGenerator {
     $packageRoot = dirname(__DIR__, 2);
 
@@ -52,6 +53,7 @@ function makeGenerator(
         endpointParametersConfig: [],
         dtoSchemaBuilder: $dtoSchemaBuilder,
         logger: new NullLogger(),
+        pruneComponents: $pruneComponents,
     );
 }
 
@@ -87,9 +89,10 @@ test('full pipeline merges DTO schemas into components', function () {
 
     $schemaNames = array_keys($json['components']['schemas']);
 
-    // DTO-generated schemas should be present
+    // ExampleData is referenced by the /api/examples operation, so it is present.
+    // TestData is not referenced by any documented operation, so clean-by-default prunes it.
     expect($schemaNames)->toContain('ExampleData')
-        ->and($schemaNames)->toContain('TestData');
+        ->and($schemaNames)->not->toContain('TestData');
 });
 
 test('full pipeline injects security definitions', function () {
@@ -184,4 +187,59 @@ test('annotation-defined schemas take precedence over DTO schemas', function () 
 
     // ExampleData should exist as a key (not duplicated)
     expect($json['components']['schemas'])->toHaveKey('ExampleData');
+});
+
+test('the full spec is clean by default — unused DTO schemas are pruned', function () {
+    $generator = makeGenerator($this->docsFile, $this->yamlFile);
+    $generator->generateDocs();
+
+    $json = json_decode(file_get_contents($this->docsFile), true);
+    $schemaNames = array_keys($json['components']['schemas']);
+
+    // Only ExampleData is reachable from a documented operation.
+    expect($schemaNames)->toContain('ExampleData')
+        ->and($schemaNames)->not->toContain('TestData')
+        ->and($schemaNames)->not->toContain('DateTimeTestData');
+});
+
+test('pruning can be disabled to keep all DTO schemas', function () {
+    $generator = makeGenerator($this->docsFile, $this->yamlFile, pruneComponents: false);
+    $generator->generateDocs();
+
+    $json = json_decode(file_get_contents($this->docsFile), true);
+    $schemaNames = array_keys($json['components']['schemas']);
+
+    expect($schemaNames)->toContain('ExampleData')
+        ->and($schemaNames)->toContain('TestData');
+});
+
+test('the generated document has no dangling component references', function () {
+    $generator = makeGenerator($this->docsFile, $this->yamlFile);
+    $generator->generateDocs();
+
+    $json = json_decode(file_get_contents($this->docsFile), true);
+
+    $refs = [];
+    $collect = function ($node) use (&$collect, &$refs): void {
+        if (! is_array($node)) {
+            return;
+        }
+        foreach ($node as $key => $value) {
+            if ($key === '$ref' && is_string($value)) {
+                $refs[] = $value;
+            } else {
+                $collect($value);
+            }
+        }
+    };
+    $collect($json);
+
+    foreach ($refs as $ref) {
+        if (! str_starts_with($ref, '#/components/')) {
+            continue;
+        }
+
+        [$type, $name] = array_slice(explode('/', $ref), 2);
+        expect($json['components'][$type][$name] ?? null)->not->toBeNull("dangling ref: {$ref}");
+    }
 });

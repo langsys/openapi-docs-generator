@@ -25,6 +25,53 @@ return [
                 'annotations' => [app_path()],
             ],
         ],
+
+        /*
+        | --- Filtered documentation sets ---------------------------------------
+        |
+        | A documentation set can emit only a subset of your API — e.g. an
+        | "integration" spec containing just the endpoints an API key can call.
+        | Selection is by construction: only the chosen operations, and the
+        | schemas/parameters/tags they transitively reference, are emitted.
+        |
+        | Operations are matched to their Laravel route (by controller action,
+        | falling back to the path signature) and selected by a pluggable filter.
+        | The default discriminator is route middleware — ground truth, unlike
+        | hand-written `security` annotations which can drift.
+        |
+        | 'integration' => [
+        |     'paths'  => ['docs_json' => 'api-docs-integration.json'],
+        |     'filter' => [
+        |         // Keep operations matching ANY include descriptor...
+        |         'include' => [
+        |             ['middleware' => 'auth.apikey'],   // MiddlewareFilter (alias or FQCN)
+        |             // ['tag' => 'Public'],
+        |             // ['path' => 'webhooks/*'],
+        |             // ['operationId' => 'listProjects'],
+        |             // ['class' => \App\Docs\CustomFilter::class, 'args' => []],
+        |         ],
+        |         // ...and NONE of the exclude descriptors.
+        |         // 'exclude' => [ ['middleware' => 'auth.internal'] ],
+        |
+        |         // Operations that can't be matched to a route: 'exclude' (default) or 'include'.
+        |         'unmatched' => 'exclude',
+        |
+        |         // Optional: prepend a base prefix (e.g. 'api') to OpenAPI paths
+        |         // before path-signature matching. Usually unnecessary.
+        |         // 'route_prefix' => null,
+        |     ],
+        |
+        |     // Force the displayed security on every surviving operation so the
+        |     // set stays auth-consistent with the filter, and restrict advertised
+        |     // security schemes to those it names.
+        |     'security_override' => [ ['apiKey' => []] ],
+        | ],
+        |
+        | Every set drops components/tags no operation references, so docs never
+        | ship unused schemas. Filtered sets always prune; on any other set you can
+        | opt out to keep all your DTO schemas even when nothing references them:
+        | 'v2' => [ ..., 'prune_unused_components' => false ],
+        */
     ],
 
     /*

@@ -34,16 +34,21 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 
 ### Generation Pipeline
 
-`OpenApiGenerator` orchestrates a 9-step pipeline:
+`OpenApiGenerator` orchestrates the pipeline:
 1. `prepareDirectory()` — Ensure output directory exists and is writable
 2. `defineConstants()` — Define PHP constants from config for use in annotations
 3. `scanFilesForDocumentation()` — Use zircote/swagger-php to scan controller annotations
-4. `buildAndMergeDtoSchemas()` — Build DTO schemas via `DtoSchemaBuilder` and merge into OpenAPI model (annotation-defined schemas take precedence)
-5. `populateServers()` — Add server entries from config
-6. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
-7. `saveJson()` — Save OpenAPI model as JSON
-8. `injectSecurity()` — Inject security definitions from config into JSON
-9. `makeYamlCopy()` — Optionally convert JSON to YAML
+4. `selectOperations()` — (Filtered sets only) Resolve each operation's route and keep only those matching the set's `OperationFilter`s; returns a `SelectionReport`
+5. `applySecurityOverride()` — (Filtered sets only) Force the configured `security_override` onto every surviving operation
+6. `buildAndMergeDtoSchemas()` — Build DTO schemas via `DtoSchemaBuilder` and merge into OpenAPI model (annotation-defined schemas take precedence)
+7. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
+8. `pruneComponentsAndTags()` — Remove components/tags outside the transitive `$ref` closure of the surviving operations. On by default so no document ships unused schemas; opt out per non-filtered set with `prune_unused_components => false` (filtered sets always prune)
+9. `populateServers()` — Add server entries from config
+10. `saveJson()` — Save OpenAPI model as JSON
+11. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
+12. `makeYamlCopy()` — Optionally convert JSON to YAML
+
+Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step after step 3 mutates that in-memory model. Filtering is therefore post-scan (the discriminator, route middleware, is not present in the scanned annotations). Clean output is guaranteed by the prune step, not by a reference-driven build: `buildAndMergeDtoSchemas()` builds all DTOs, then `pruneComponentsAndTags()` removes everything outside the reference closure. This build-all-then-prune order is deliberate — it can never emit a dangling `$ref` (pruning only removes unreachable components), whereas a reference-driven "build only the closure" would risk under-building. A lazy closure build is a possible future perf optimization, but only with an added `$ref`-resolution validation pass; it is not needed for correctness.
 
 ### Key Classes (under `Langsys\OpenApiDocsGenerator`)
 
@@ -54,6 +59,20 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 - **Generators\ConfigFactory** — Deep-merges `defaults` config with per-documentation overrides.
 - **Generators\SecurityDefinitions** — Post-generation injection of security schemes from config into the JSON file.
 - **Generators\EndpointParameterEnricher** — Replaces generic `$ref` parameters (order_by/filter_by) with endpoint-specific inline parameters using a pluggable resolver.
+- **Generators\OperationSelector** — (Filtered sets) Resolves each operation's Laravel route via a `RouteResolver`, applies include-union/exclude-subtract `OperationFilter`s (unmatched operations governed by the `unmatched` policy), removes non-selected operations in place, and returns a `SelectionReport` (kept/dropped/unmatched — always surfaced).
+- **Generators\ComponentTagPruner** — Runs for every set by default (opt out via `prune_unused_components => false`). Computes the transitive `$ref` closure reachable from the operations (paths + webhooks) + security requirements, then removes unreferenced components (schemas, responses, parameters, securitySchemes, …) and unused tags. Shape-agnostic ref walk (handles `$ref` at any nesting plus `discriminator.mapping`), so it never drops a genuinely-referenced schema. Security-scheme aware. Tags keep their full object (name + description) and original order. Walks an explicit closure from roots, so unreachable component cycles are still pruned.
+
+### Filtered Documentation Sets
+
+Emit a subset of the API as its own spec (e.g. an "integration" set of only the endpoints an API key can call), correct-by-construction. Discriminator is Laravel route middleware (ground truth), not the `security` annotation (which drifts).
+
+- **Contracts\RouteResolver** — Interface: resolve a `ResolvableOperation` (httpMethod + path + optional controller action) to a `ResolvedRoute`, or null.
+- **Routing\LaravelRouteResolver** — Default resolver. Indexes `app('router')->getRoutes()` and resolves action-first (an operation's controller action, derived from its swagger-php `_context`, maps exactly to `Route::getActionName()` — sidesteps path normalization), falling back to structural path-signature matching (every `{param}` collapses to a wildcard). Middleware is fully resolved via `Router::gatherRouteMiddleware()`.
+- **Contracts\OperationFilter** — Interface: `matches(OperationContext): bool`.
+- **Filters\MiddlewareFilter** — Default discriminator. Resolves a config alias (e.g. `auth.apikey`) or FQCN to its class via the router alias map (`getMiddleware()`, NOT the Kernel), then matches against the route's fully-resolved middleware (exact + `:params` prefix). Also **TagFilter**, **PathFilter**, **OperationIdFilter**.
+- **Filters\OperationFilterFactory** — Builds filters from config descriptors (`['middleware'=>…]`, `['tag'=>…]`, …, or `['class'=>Custom::class,'args'=>[…]]`).
+- **Data\ResolvableOperation / ResolvedRoute / OperationContext / SelectionReport** — Value objects threading route resolution and the selection outcome.
+- Config: a documentation set's `filter` (`include`/`exclude` descriptor lists, `unmatched` policy, optional `route_prefix`), `security_override`, and `prune_unused_components` (pruning is on by default; set `false` to keep unreferenced schemas on a non-filtered set). See `src/config/openapi-docs.php` for a commented example.
 
 ### PHP Attributes (`Generators/Attributes/`)
 
@@ -79,7 +98,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (120 tests, 338 assertions).
+Tests use Pest with Orchestra Testbench (169 tests, 431 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -91,10 +110,16 @@ Tests use Pest with Orchestra Testbench (120 tests, 338 assertions).
 | `tests/Unit/DataObjectTest.php` | `openapi:dto` command error handling |
 | `tests/Unit/ProcessorTagSynchronizerTest.php` | Tag synchronization between OpenAPI output and processor config |
 | `tests/Unit/ThunderClientGeneratorTest.php` | Thunder Client collection generation, auth, merging, sorting |
+| `tests/Unit/LaravelRouteResolverTest.php` | Route resolution: action-first, path-signature fallback, param-name insensitivity, middleware gathering, disambiguation, no-match |
+| `tests/Unit/MiddlewareFilterTest.php` | Middleware matching: alias→class resolution, FQCN, dual-auth, `:params`, null route, match=all |
+| `tests/Unit/OperationFilterFactoryTest.php` | Descriptor → filter type, class escape hatch, error cases |
+| `tests/Unit/OperationSelectorTest.php` | Include-union/exclude-subtract, unmatched policy, empty-path-item removal, SelectionReport |
+| `tests/Unit/ComponentTagPrunerTest.php` | Transitive `$ref` closure (incl. cycle pruning), security-scheme pruning, tag object+order preservation |
 | `tests/Integration/FullPipelineTest.php` | End-to-end: scan + DTO build + security + servers + JSON/YAML |
+| `tests/Integration/FilteredDocumentationSetTest.php` | End-to-end filtered set: keep/drop by middleware, orphan-schema prune, unmatched exclusion, security_override + scheme restriction |
 
 Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
-Test fixtures (controller with OA attributes for scanning) live in `tests/Fixtures/`.
+Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`.
 
 ## Key Patterns
 
