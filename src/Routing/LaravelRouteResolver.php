@@ -15,8 +15,14 @@ use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
  * route's action name, which sidesteps every path-normalization pitfall (base
  * prefix, "{id}" vs "{project}" naming, optional params, regex constraints).
  * When an operation has no resolvable action (closure routes, annotation-only
- * paths), it falls back to structural path-signature matching, where every
- * "{param}" collapses to a wildcard so param-name differences don't defeat it.
+ * paths), it falls back to structural segment matching, where:
+ *
+ *  - a route/OA "{param}" segment matches any segment on the other side (so
+ *    parameter-name differences don't matter, and a route "{format?}" matches a
+ *    concrete OA segment like "flat" that documents one value of that param);
+ *  - a route's trailing optional "{param?}" may be absent from the OA path;
+ *  - among matches, the most specific route (most exact literal-segment
+ *    agreements) wins, so a literal route beats a wildcard one.
  *
  * The route index is built once, lazily, from the router's full route collection.
  */
@@ -25,8 +31,8 @@ class LaravelRouteResolver implements RouteResolver
     /** @var array<string, array<int, Route>> Action name => routes. */
     private array $byAction = [];
 
-    /** @var array<string, array<int, Route>> "METHOD signature" => routes. */
-    private array $bySignature = [];
+    /** @var array<int, Route> All routes, for the structural fallback. */
+    private array $routes = [];
 
     private bool $indexed = false;
 
@@ -39,7 +45,7 @@ class LaravelRouteResolver implements RouteResolver
     {
         $this->buildIndex();
 
-        $route = $this->matchByAction($operation) ?? $this->matchBySignature($operation);
+        $route = $this->matchByAction($operation) ?? $this->matchStructural($operation);
 
         if ($route === null) {
             return null;
@@ -53,7 +59,8 @@ class LaravelRouteResolver implements RouteResolver
     }
 
     /**
-     * Build the action and path-signature indexes from every registered route.
+     * Index every registered route by action, and keep a flat list for the
+     * structural fallback.
      */
     private function buildIndex(): void
     {
@@ -67,9 +74,7 @@ class LaravelRouteResolver implements RouteResolver
                 $this->byAction[$action][] = $route;
             }
 
-            foreach ($route->methods() as $method) {
-                $this->bySignature[$this->signatureKey($method, $route->uri())][] = $route;
-            }
+            $this->routes[] = $route;
         }
 
         $this->indexed = true;
@@ -81,58 +86,125 @@ class LaravelRouteResolver implements RouteResolver
             return null;
         }
 
-        return $this->disambiguate($this->byAction[$operation->action] ?? [], $operation);
+        return $this->pickBest($this->byAction[$operation->action] ?? [], $operation, requireMatch: false);
     }
 
-    private function matchBySignature(ResolvableOperation $operation): ?Route
+    private function matchStructural(ResolvableOperation $operation): ?Route
     {
-        $candidates = $this->bySignature[$this->signatureKey($operation->httpMethod, $operation->path)] ?? [];
-
-        return $candidates[0] ?? null;
+        return $this->pickBest($this->routes, $operation, requireMatch: true);
     }
 
     /**
-     * When an action backs more than one route, disambiguate by HTTP method and
-     * then path signature; otherwise return the sole candidate.
+     * Choose the best route from a candidate list for the operation.
+     *
+     * Candidates are filtered by HTTP method and structural segment match, then
+     * ranked by specificity (exact literal-segment agreements). When
+     * $requireMatch is false (an action already selected the candidates) a
+     * candidate with the right method is returned even if segments don't align.
      *
      * @param  array<int, Route>  $candidates
      */
-    private function disambiguate(array $candidates, ResolvableOperation $operation): ?Route
+    private function pickBest(array $candidates, ResolvableOperation $operation, bool $requireMatch): ?Route
     {
-        if (count($candidates) <= 1) {
-            return $candidates[0] ?? null;
+        if ($candidates === []) {
+            return null;
         }
 
         $method = strtoupper($operation->httpMethod);
-        $signature = $this->normalizeSignature($operation->path);
+        $operationSegments = $this->segments($operation->path);
+
+        $best = null;
+        $bestScore = -1;
+        $methodFallback = null;
 
         foreach ($candidates as $route) {
-            if (in_array($method, $route->methods(), true)
-                && $this->normalizeSignature($route->uri()) === $signature) {
-                return $route;
+            if (! in_array($method, $route->methods(), true)) {
+                continue;
+            }
+
+            $methodFallback ??= $route;
+
+            $score = $this->matchScore($this->segments($route->uri()), $operationSegments);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $route;
             }
         }
 
-        foreach ($candidates as $route) {
-            if (in_array($method, $route->methods(), true)) {
-                return $route;
-            }
+        if ($best !== null) {
+            return $best;
         }
 
-        return $candidates[0];
-    }
+        if ($requireMatch) {
+            return null;
+        }
 
-    private function signatureKey(string $method, string $path): string
-    {
-        return strtoupper($method) . ' ' . $this->normalizeSignature($path);
+        // Action matched but no segment alignment (e.g. divergent path docs):
+        // trust the action and return a same-method candidate, then the first.
+        return $methodFallback ?? $candidates[0];
     }
 
     /**
-     * Reduce a path to a comparable signature: normalize the base prefix and
-     * collapse every "{param}" (including optional "{param?}") to "{}" so
-     * parameter-name and optional differences don't defeat matching.
+     * Score how well a route's segments match an operation's, or -1 for no match.
+     * A higher score means more exact literal agreements (a more specific route).
+     *
+     * @param  array<int, string>  $routeSegments
+     * @param  array<int, string>  $operationSegments
      */
-    private function normalizeSignature(string $path): string
+    private function matchScore(array $routeSegments, array $operationSegments): int
+    {
+        $routeCount = count($routeSegments);
+        $operationCount = count($operationSegments);
+
+        if ($operationCount === $routeCount) {
+            return $this->alignScore($routeSegments, $operationSegments);
+        }
+
+        // A trailing optional route param may be omitted by the operation path.
+        if ($routeCount > 0
+            && $this->isOptionalParam($routeSegments[$routeCount - 1])
+            && $operationCount === $routeCount - 1) {
+            return $this->alignScore(array_slice($routeSegments, 0, $routeCount - 1), $operationSegments);
+        }
+
+        return -1;
+    }
+
+    /**
+     * Segment-wise alignment score for equal-length segment lists, or -1 if any
+     * literal-vs-literal pair disagrees. A "{param}" on either side matches
+     * anything (no specificity credit); equal literals score one point each.
+     *
+     * @param  array<int, string>  $routeSegments
+     * @param  array<int, string>  $operationSegments
+     */
+    private function alignScore(array $routeSegments, array $operationSegments): int
+    {
+        $literalMatches = 0;
+
+        foreach ($routeSegments as $index => $routeSegment) {
+            $operationSegment = $operationSegments[$index];
+
+            if ($this->isParam($routeSegment) || $this->isParam($operationSegment)) {
+                continue;
+            }
+
+            if ($routeSegment !== $operationSegment) {
+                return -1;
+            }
+
+            $literalMatches++;
+        }
+
+        return $literalMatches;
+    }
+
+    /**
+     * Split a path into raw segments after reconciling the base prefix.
+     *
+     * @return array<int, string>
+     */
+    private function segments(string $path): array
     {
         $path = trim($path, '/');
 
@@ -143,16 +215,17 @@ class LaravelRouteResolver implements RouteResolver
             }
         }
 
-        if ($path === '') {
-            return '';
-        }
+        return $path === '' ? [] : explode('/', $path);
+    }
 
-        $segments = array_map(
-            static fn (string $segment): string => preg_match('/^\{.*\}$/', $segment) === 1 ? '{}' : $segment,
-            explode('/', $path),
-        );
+    private function isParam(string $segment): bool
+    {
+        return $segment !== '' && $segment[0] === '{' && str_ends_with($segment, '}');
+    }
 
-        return implode('/', $segments);
+    private function isOptionalParam(string $segment): bool
+    {
+        return $this->isParam($segment) && str_ends_with($segment, '?}');
     }
 
     /**

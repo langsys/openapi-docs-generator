@@ -67,7 +67,7 @@ Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step 
 Emit a subset of the API as its own spec (e.g. an "integration" set of only the endpoints an API key can call), correct-by-construction. Discriminator is Laravel route middleware (ground truth), not the `security` annotation (which drifts).
 
 - **Contracts\RouteResolver** — Interface: resolve a `ResolvableOperation` (httpMethod + path + optional controller action) to a `ResolvedRoute`, or null.
-- **Routing\LaravelRouteResolver** — Default resolver. Indexes `app('router')->getRoutes()` and resolves action-first (an operation's controller action, derived from its swagger-php `_context`, maps exactly to `Route::getActionName()` — sidesteps path normalization), falling back to structural path-signature matching (every `{param}` collapses to a wildcard). Middleware is fully resolved via `Router::gatherRouteMiddleware()`.
+- **Routing\LaravelRouteResolver** — Default resolver. Indexes `app('router')->getRoutes()` and resolves action-first (an operation's controller action, derived from its swagger-php `_context`, maps exactly to `Route::getActionName()` — sidesteps path normalization), falling back to structural segment matching. A route/OA `{param}` matches any segment on the other side; a route's trailing optional `{param?}` may be present (matching a documented literal like `.../flat`) or absent; the most specific route (most exact literal agreements) wins so a literal route beats a wildcard one. Middleware is fully resolved via `Router::gatherRouteMiddleware()`.
 - **Contracts\OperationFilter** — Interface: `matches(OperationContext): bool`.
 - **Filters\MiddlewareFilter** — Default discriminator. Resolves a config alias (e.g. `auth.apikey`) or FQCN to its class via the router alias map (`getMiddleware()`, NOT the Kernel), then matches against the route's fully-resolved middleware (exact + `:params` prefix). Also **TagFilter**, **PathFilter**, **OperationIdFilter**.
 - **Filters\OperationFilterFactory** — Builds filters from config descriptors (`['middleware'=>…]`, `['tag'=>…]`, …, or `['class'=>Custom::class,'args'=>[…]]`).
@@ -98,7 +98,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (169 tests, 431 assertions).
+Tests use Pest with Orchestra Testbench (172 tests, 439 assertions).
 
 | Test File | What It Covers |
 |---|---|
