@@ -17,21 +17,38 @@ class GenerateCommand extends Command
 
     public function handle(): int
     {
+        $failures = 0;
+
         if ($this->option('all')) {
             $documentations = array_keys(config('openapi-docs.documentations', []));
 
             foreach ($documentations as $documentation) {
-                $this->generateDocumentation($documentation);
+                if (! $this->generateDocumentation($documentation)) {
+                    $failures++;
+                }
             }
         } else {
             $documentation = $this->argument('documentation') ?? config('openapi-docs.default', 'default');
-            $this->generateDocumentation($documentation);
+            if (! $this->generateDocumentation($documentation)) {
+                $failures++;
+            }
+        }
+
+        // A non-zero exit makes strict gates real: a CI/deploy `if artisan openapi:generate`
+        // must see failure when any set aborts. Successful sets still wrote their output.
+        if ($failures > 0) {
+            $this->error(sprintf('%d documentation set(s) failed to generate.', $failures));
+
+            return self::FAILURE;
         }
 
         return self::SUCCESS;
     }
 
-    private function generateDocumentation(string $documentation): void
+    /**
+     * @return bool  True if the set generated; false if it failed (exception).
+     */
+    private function generateDocumentation(string $documentation): bool
     {
         $this->info("Generating OpenAPI documentation for '{$documentation}'...");
 
@@ -59,8 +76,12 @@ class GenerateCommand extends Command
 
                 $this->info('Thunder Client collection updated.');
             }
+
+            return true;
         } catch (\Throwable $e) {
             $this->error("Failed to generate '{$documentation}': {$e->getMessage()}");
+
+            return false;
         }
     }
 

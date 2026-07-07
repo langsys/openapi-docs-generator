@@ -100,7 +100,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (180 tests, 454 assertions).
+Tests use Pest with Orchestra Testbench (183 tests, 461 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -121,6 +121,7 @@ Tests use Pest with Orchestra Testbench (180 tests, 454 assertions).
 | `tests/Integration/FullPipelineTest.php` | End-to-end: scan + DTO build + security + servers + JSON/YAML |
 | `tests/Integration/FilteredDocumentationSetTest.php` | End-to-end filtered set: keep/drop by middleware, orphan-schema prune, unmatched exclusion, security_override + scheme restriction |
 | `tests/Integration/ReferenceValidationTest.php` | `validate_refs` off/warn/strict pipeline behavior (report vs abort-before-write) |
+| `tests/Integration/GenerateCommandExitCodeTest.php` | `openapi:generate` exit code — non-zero if any set fails (strict abort), 0 on success; `--all` fails-if-any while successful sets still write |
 
 Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
 Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`. `tests/DanglingFixtures/` holds a controller with a deliberately undefined `$ref` (kept out of `tests/Fixtures/` so it doesn't pollute other scan-based tests).
@@ -134,6 +135,7 @@ Test fixtures (controller with OA attributes for scanning; `RoutingController.ph
 - Laravel Data Optional: union types containing `Spatie\LaravelData\Optional` (e.g., `string|Optional`) have Optional stripped — the remaining type is used for the schema, and the property is excluded from the `required` array. This matches Laravel Data's "sometimes" validation behavior.
 - Multiple documentation sets: each key in `documentations` config overrides `defaults` via deep merge (associative arrays merged, scalars/indexed arrays replaced).
 - No UI serving — this package is generation-only. Use a separate Swagger UI viewer.
+- `openapi:generate` exit code: returns non-zero (`self::FAILURE`) if any documentation set fails to generate (e.g. a `validate_refs => 'strict'` abort), so it works as a CI/deploy gate (`if artisan openapi:generate; then …`). In an `--all` run, successful sets still write their output; only the failing set aborts-before-write, and the overall exit is non-zero.
 
 ## Git
 
