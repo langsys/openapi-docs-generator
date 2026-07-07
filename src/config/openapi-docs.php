@@ -71,6 +71,14 @@ return [
         | ship unused schemas. Filtered sets always prune; on any other set you can
         | opt out to keep all your DTO schemas even when nothing references them:
         | 'v2' => [ ..., 'prune_unused_components' => false ],
+        |
+        | --- Unresolved $ref detection (opt-in) --------------------------------
+        |
+        | Catch $refs that point at a component which is never defined (e.g. an
+        | @OA\Parameter(ref="#/components/parameters/tier") with no matching
+        | definition block). Off by default. 'warn' lists them after generation;
+        | 'strict' aborts generation so a broken spec is never written — ideal in CI.
+        | 'default' => [ ..., 'validate_refs' => 'strict' ],
         */
     ],
 

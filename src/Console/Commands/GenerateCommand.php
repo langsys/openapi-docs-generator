@@ -41,6 +41,7 @@ class GenerateCommand extends Command
             $this->info("Documentation '{$documentation}' generated successfully.");
 
             $this->reportSelection($documentation, $generator);
+            $this->reportUnresolvedReferences($generator);
 
             $this->synchronizeProcessorTags($documentation);
 
@@ -92,6 +93,24 @@ class GenerateCommand extends Command
             foreach ($report->unmatched as $entry) {
                 $this->warn(sprintf('  - %s %s', strtoupper($entry['method']), $entry['path']));
             }
+        }
+    }
+
+    /**
+     * Warn about referenced-but-undefined $refs when validate_refs is enabled.
+     */
+    private function reportUnresolvedReferences(OpenApiGenerator $generator): void
+    {
+        $unresolved = $generator->getUnresolvedReferences();
+
+        if ($unresolved === []) {
+            return;
+        }
+
+        $this->warn(sprintf('%d unresolved $ref(s) — referenced but never defined:', count($unresolved)));
+
+        foreach ($unresolved as $entry) {
+            $this->warn(sprintf('  - %s (used at %s)', $entry['ref'], $entry['location']));
         }
     }
 

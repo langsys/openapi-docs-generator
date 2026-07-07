@@ -20,6 +20,9 @@ class OpenApiGenerator
 
     private ?SelectionReport $selectionReport = null;
 
+    /** @var array<int, array{ref: string, location: string}> */
+    private array $unresolvedReferences = [];
+
     /**
      * @param  OperationSelector|null  $operationSelector  When set, filters the document to a documentation set.
      * @param  array<int, array<string, mixed>>|null  $securityOverride  Per-operation security requirement to force
@@ -27,6 +30,7 @@ class OpenApiGenerator
      * @param  bool  $pruneComponents  Remove components/tags not reachable from the surviving operations.
      *                                 On by default so no generated document ships unused schemas; a filtered
      *                                 set always prunes regardless (see GeneratorFactory).
+     * @param  string  $validateRefs  Unresolved-$ref detection: 'off' (default), 'warn' (report), or 'strict' (fail).
      */
     public function __construct(
         private array $annotationsDir,
@@ -44,6 +48,7 @@ class OpenApiGenerator
         private ?OperationSelector $operationSelector = null,
         private ?array $securityOverride = null,
         private bool $pruneComponents = true,
+        private string $validateRefs = 'off',
     ) {}
 
     /**
@@ -52,6 +57,17 @@ class OpenApiGenerator
     public function getSelectionReport(): ?SelectionReport
     {
         return $this->selectionReport;
+    }
+
+    /**
+     * Unresolved `$ref`s found in the last generation (empty unless validate_refs
+     * is enabled). Each entry is ['ref' => …, 'location' => 'METHOD /path'].
+     *
+     * @return array<int, array{ref: string, location: string}>
+     */
+    public function getUnresolvedReferences(): array
+    {
+        return $this->unresolvedReferences;
     }
 
     /**
@@ -70,6 +86,7 @@ class OpenApiGenerator
         $this->enrichEndpointParameters();
         $this->pruneComponentsAndTags();
         $this->populateServers();
+        $this->validateReferences();
         $this->saveJson();
         $this->injectSecurity();
         $this->makeYamlCopy();
@@ -126,6 +143,57 @@ class OpenApiGenerator
         }
 
         (new ComponentTagPruner())->prune($this->openApi);
+    }
+
+    /**
+     * Detect referenced-but-undefined `$ref`s in the assembled document.
+     *
+     * Runs on the in-memory model before saving (its `$ref`s match the final JSON;
+     * config-injected security schemes are referenced by name, not `$ref`, so they
+     * don't affect this check). 'warn' records them for the console command;
+     * 'strict' throws so a broken spec is never written; 'off' (default) skips.
+     *
+     * @throws OpenApiDocsException
+     */
+    private function validateReferences(): void
+    {
+        $mode = strtolower($this->validateRefs);
+
+        if ($mode !== 'warn' && $mode !== 'strict') {
+            return;
+        }
+
+        $document = json_decode(json_encode($this->openApi) ?: '{}', true);
+        if (! is_array($document)) {
+            return;
+        }
+
+        $this->unresolvedReferences = (new ReferenceValidator())->unresolvedRefs($document);
+
+        if ($this->unresolvedReferences === []) {
+            return;
+        }
+
+        if ($this->logger !== null) {
+            foreach ($this->unresolvedReferences as $unresolved) {
+                $this->logger->warning(sprintf(
+                    '[openapi-docs] unresolved $ref %s (used at %s)',
+                    $unresolved['ref'],
+                    $unresolved['location'],
+                ));
+            }
+        }
+
+        if ($mode === 'strict') {
+            $refs = implode(', ', array_map(
+                static fn (array $unresolved): string => $unresolved['ref'],
+                $this->unresolvedReferences,
+            ));
+
+            throw new OpenApiDocsException(
+                "Generation aborted: the document contains unresolved \$ref(s): {$refs}"
+            );
+        }
     }
 
     /**

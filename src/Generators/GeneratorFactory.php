@@ -38,6 +38,14 @@ class GeneratorFactory
         $pruneComponents = $operationSelector !== null
             || ($config['prune_unused_components'] ?? true);
 
+        // Opt-in unresolved-$ref detection: false/'off' (default), 'warn', 'strict'.
+        $validateRefs = $config['validate_refs'] ?? 'off';
+        $validateRefs = match ($validateRefs) {
+            true => 'warn',
+            false => 'off',
+            default => (string) $validateRefs,
+        };
+
         return new OpenApiGenerator(
             annotationsDir: $config['paths']['annotations'] ?? [],
             docsFile: ($config['paths']['docs'] ?? storage_path('api-docs')) . '/' . ($config['paths']['docs_json'] ?? 'api-docs.json'),
@@ -54,6 +62,7 @@ class GeneratorFactory
             operationSelector: $operationSelector,
             securityOverride: $securityOverride,
             pruneComponents: $pruneComponents,
+            validateRefs: $validateRefs,
         );
     }
 

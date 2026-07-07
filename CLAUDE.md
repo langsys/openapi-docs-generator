@@ -44,9 +44,10 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 7. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
 8. `pruneComponentsAndTags()` — Remove components/tags outside the transitive `$ref` closure of the surviving operations. On by default so no document ships unused schemas; opt out per non-filtered set with `prune_unused_components => false` (filtered sets always prune)
 9. `populateServers()` — Add server entries from config
-10. `saveJson()` — Save OpenAPI model as JSON
-11. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
-12. `makeYamlCopy()` — Optionally convert JSON to YAML
+10. `validateReferences()` — (Opt-in `validate_refs`) Detect referenced-but-undefined `$ref`s; `warn` records them (console), `strict` throws before writing so a broken spec is never saved
+11. `saveJson()` — Save OpenAPI model as JSON
+12. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
+13. `makeYamlCopy()` — Optionally convert JSON to YAML
 
 Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step after step 3 mutates that in-memory model. Filtering is therefore post-scan (the discriminator, route middleware, is not present in the scanned annotations). Clean output is guaranteed by the prune step, not by a reference-driven build: `buildAndMergeDtoSchemas()` builds all DTOs, then `pruneComponentsAndTags()` removes everything outside the reference closure. This build-all-then-prune order is deliberate — it can never emit a dangling `$ref` (pruning only removes unreachable components), whereas a reference-driven "build only the closure" would risk under-building. A lazy closure build is a possible future perf optimization, but only with an added `$ref`-resolution validation pass; it is not needed for correctness.
 
@@ -61,6 +62,7 @@ Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step 
 - **Generators\EndpointParameterEnricher** — Replaces generic `$ref` parameters (order_by/filter_by) with endpoint-specific inline parameters using a pluggable resolver.
 - **Generators\OperationSelector** — (Filtered sets) Resolves each operation's Laravel route via a `RouteResolver`, applies include-union/exclude-subtract `OperationFilter`s (unmatched operations governed by the `unmatched` policy), removes non-selected operations in place, and returns a `SelectionReport` (kept/dropped/unmatched — always surfaced).
 - **Generators\ComponentTagPruner** — Runs for every set by default (opt out via `prune_unused_components => false`). Computes the transitive `$ref` closure reachable from the operations (paths + webhooks) + security requirements, then removes unreferenced components (schemas, responses, parameters, securitySchemes, …) and unused tags. Shape-agnostic ref walk (handles `$ref` at any nesting plus `discriminator.mapping`), so it never drops a genuinely-referenced schema. Security-scheme aware. Tags keep their full object (name + description) and original order. Walks an explicit closure from roots, so unreachable component cycles are still pruned.
+- **Generators\ReferenceValidator** — Opt-in (`validate_refs => 'warn'|'strict'`, off by default). Finds referenced-but-undefined local `$ref`s (the pruner never *drops* something referenced, but can't catch a `$ref` to a component that was never defined — e.g. a hand-written `@OA\Parameter(ref=…)` with no definition block, undetected because the scan runs with swagger-php validation off). Shape-agnostic collection (`$ref` at any nesting + `discriminator.mapping`); resolves each local ref as a JSON pointer; reports `['ref' => …, 'location' => 'METHOD /path']`. `strict` throws (surfaced by `OpenApiGenerator::validateReferences()` before save); `warn` exposes them via `getUnresolvedReferences()` for the console command.
 
 ### Filtered Documentation Sets
 
@@ -98,7 +100,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (172 tests, 439 assertions).
+Tests use Pest with Orchestra Testbench (180 tests, 454 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -115,11 +117,13 @@ Tests use Pest with Orchestra Testbench (172 tests, 439 assertions).
 | `tests/Unit/OperationFilterFactoryTest.php` | Descriptor → filter type, class escape hatch, error cases |
 | `tests/Unit/OperationSelectorTest.php` | Include-union/exclude-subtract, unmatched policy, empty-path-item removal, SelectionReport |
 | `tests/Unit/ComponentTagPrunerTest.php` | Transitive `$ref` closure (incl. cycle pruning), security-scheme pruning, tag object+order preservation |
+| `tests/Unit/ReferenceValidatorTest.php` | Unresolved-`$ref` detection: resolved vs dangling, nested closure, discriminator mapping, external-ref skip, location formatting |
 | `tests/Integration/FullPipelineTest.php` | End-to-end: scan + DTO build + security + servers + JSON/YAML |
 | `tests/Integration/FilteredDocumentationSetTest.php` | End-to-end filtered set: keep/drop by middleware, orphan-schema prune, unmatched exclusion, security_override + scheme restriction |
+| `tests/Integration/ReferenceValidationTest.php` | `validate_refs` off/warn/strict pipeline behavior (report vs abort-before-write) |
 
 Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
-Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`.
+Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`. `tests/DanglingFixtures/` holds a controller with a deliberately undefined `$ref` (kept out of `tests/Fixtures/` so it doesn't pollute other scan-based tests).
 
 ## Key Patterns
 
