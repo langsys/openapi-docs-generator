@@ -23,6 +23,9 @@ class OpenApiGenerator
     /** @var array<int, array{ref: string, location: string}> */
     private array $unresolvedReferences = [];
 
+    /** Scalar `@OA\Info` fields a per-set `info` override may set directly. */
+    private const INFO_SCALAR_FIELDS = ['title', 'description', 'version', 'termsOfService', 'summary'];
+
     /**
      * @param  OperationSelector|null  $operationSelector  When set, filters the document to a documentation set.
      * @param  array<int, array<string, mixed>>|null  $securityOverride  Per-operation security requirement to force
@@ -31,6 +34,8 @@ class OpenApiGenerator
      *                                 On by default so no generated document ships unused schemas; a filtered
      *                                 set always prunes regardless (see GeneratorFactory).
      * @param  string  $validateRefs  Unresolved-$ref detection: 'off' (default), 'warn' (report), or 'strict' (fail).
+     * @param  array<string, mixed>|null  $infoOverride  Per-set `info` fields (title/description/version/…) deep-merged
+     *                                                    over the scanned `@OA\Info`; unspecified fields fall back to it.
      */
     public function __construct(
         private array $annotationsDir,
@@ -49,6 +54,7 @@ class OpenApiGenerator
         private ?array $securityOverride = null,
         private bool $pruneComponents = true,
         private string $validateRefs = 'off',
+        private ?array $infoOverride = null,
     ) {}
 
     /**
@@ -86,6 +92,7 @@ class OpenApiGenerator
         $this->enrichEndpointParameters();
         $this->pruneComponentsAndTags();
         $this->populateServers();
+        $this->applyInfoOverride();
         $this->validateReferences();
         $this->saveJson();
         $this->injectSecurity();
@@ -376,6 +383,66 @@ class OpenApiGenerator
         }
 
         $this->openApi->servers[] = $server;
+    }
+
+    /**
+     * Apply a documentation set's `info` override onto the scanned `@OA\Info`.
+     *
+     * Only the fields present in the override are set, so unspecified fields
+     * (version, contact, …) fall back to the annotation. `contact` and `license`
+     * are deep-merged so their unspecified sub-fields survive too. If no `@OA\Info`
+     * was scanned, one is created from the override.
+     */
+    private function applyInfoOverride(): void
+    {
+        if ($this->infoOverride === null || $this->infoOverride === []) {
+            return;
+        }
+
+        if (! $this->openApi->info instanceof OA\Info) {
+            $this->openApi->info = new OA\Info([]);
+        }
+
+        $info = $this->openApi->info;
+
+        foreach ($this->infoOverride as $key => $value) {
+            if (in_array($key, self::INFO_SCALAR_FIELDS, true)) {
+                $info->{$key} = $value;
+                continue;
+            }
+
+            if ($key === 'contact' && is_array($value)) {
+                $info->contact = $this->mergeInfoChild($info->contact, OA\Contact::class, $value);
+                continue;
+            }
+
+            if ($key === 'license' && is_array($value)) {
+                $info->license = $this->mergeInfoChild($info->license, OA\License::class, $value);
+                continue;
+            }
+
+            if ($this->logger !== null) {
+                $this->logger->warning("[openapi-docs] ignoring unknown info override field '{$key}'");
+            }
+        }
+    }
+
+    /**
+     * Deep-merge an override array onto a nested `@OA\Info` child (contact/license),
+     * preserving any scanned sub-fields the override doesn't specify.
+     *
+     * @param  class-string<OA\AbstractAnnotation>  $class
+     * @param  array<string, mixed>  $override
+     */
+    private function mergeInfoChild(mixed $existing, string $class, array $override): OA\AbstractAnnotation
+    {
+        $child = $existing instanceof $class ? $existing : new $class([]);
+
+        foreach ($override as $key => $value) {
+            $child->{$key} = $value;
+        }
+
+        return $child;
     }
 
     /**

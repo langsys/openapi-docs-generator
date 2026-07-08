@@ -44,10 +44,11 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 7. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
 8. `pruneComponentsAndTags()` — Remove components/tags outside the transitive `$ref` closure of the surviving operations. On by default so no document ships unused schemas; opt out per non-filtered set with `prune_unused_components => false` (filtered sets always prune)
 9. `populateServers()` — Add server entries from config
-10. `validateReferences()` — (Opt-in `validate_refs`) Detect referenced-but-undefined `$ref`s; `warn` records them (console), `strict` throws before writing so a broken spec is never saved
-11. `saveJson()` — Save OpenAPI model as JSON
-12. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
-13. `makeYamlCopy()` — Optionally convert JSON to YAML
+10. `applyInfoOverride()` — (Per-set `info`) Deep-merge a documentation set's `info` fields (title/description/version/contact/license) over the scanned `@OA\Info`; unspecified fields fall back to the annotation
+11. `validateReferences()` — (Opt-in `validate_refs`) Detect referenced-but-undefined `$ref`s; `warn` records them (console), `strict` throws before writing so a broken spec is never saved
+12. `saveJson()` — Save OpenAPI model as JSON
+13. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
+14. `makeYamlCopy()` — Optionally convert JSON to YAML
 
 Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step after step 3 mutates that in-memory model. Filtering is therefore post-scan (the discriminator, route middleware, is not present in the scanned annotations). Clean output is guaranteed by the prune step, not by a reference-driven build: `buildAndMergeDtoSchemas()` builds all DTOs, then `pruneComponentsAndTags()` removes everything outside the reference closure. This build-all-then-prune order is deliberate — it can never emit a dangling `$ref` (pruning only removes unreachable components), whereas a reference-driven "build only the closure" would risk under-building. A lazy closure build is a possible future perf optimization, but only with an added `$ref`-resolution validation pass; it is not needed for correctness.
 
@@ -74,7 +75,7 @@ Emit a subset of the API as its own spec (e.g. an "integration" set of only the 
 - **Filters\MiddlewareFilter** — Default discriminator. Resolves a config alias (e.g. `auth.apikey`) or FQCN to its class via the router alias map (`getMiddleware()`, NOT the Kernel), then matches against the route's fully-resolved middleware (exact + `:params` prefix). Also **TagFilter**, **PathFilter**, **OperationIdFilter**.
 - **Filters\OperationFilterFactory** — Builds filters from config descriptors (`['middleware'=>…]`, `['tag'=>…]`, …, or `['class'=>Custom::class,'args'=>[…]]`).
 - **Data\ResolvableOperation / ResolvedRoute / OperationContext / SelectionReport** — Value objects threading route resolution and the selection outcome.
-- Config: a documentation set's `filter` (`include`/`exclude` descriptor lists, `unmatched` policy, optional `route_prefix`), `security_override`, and `prune_unused_components` (pruning is on by default; set `false` to keep unreferenced schemas on a non-filtered set). See `src/config/openapi-docs.php` for a commented example.
+- Config: a documentation set's `filter` (`include`/`exclude` descriptor lists, `unmatched` policy, optional `route_prefix`), `security_override`, `info` (per-set title/description/… deep-merged over the scanned `@OA\Info`), and `prune_unused_components` (pruning is on by default; set `false` to keep unreferenced schemas on a non-filtered set). See `src/config/openapi-docs.php` for a commented example.
 
 ### PHP Attributes (`Generators/Attributes/`)
 
@@ -100,7 +101,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (183 tests, 461 assertions).
+Tests use Pest with Orchestra Testbench (186 tests, 470 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -122,6 +123,7 @@ Tests use Pest with Orchestra Testbench (183 tests, 461 assertions).
 | `tests/Integration/FilteredDocumentationSetTest.php` | End-to-end filtered set: keep/drop by middleware, orphan-schema prune, unmatched exclusion, security_override + scheme restriction |
 | `tests/Integration/ReferenceValidationTest.php` | `validate_refs` off/warn/strict pipeline behavior (report vs abort-before-write) |
 | `tests/Integration/GenerateCommandExitCodeTest.php` | `openapi:generate` exit code — non-zero if any set fails (strict abort), 0 on success; `--all` fails-if-any while successful sets still write |
+| `tests/Integration/InfoOverrideTest.php` | Per-set `info` override — replaces title/description, unspecified fields fall back to `@OA\Info`, nested contact deep-merge |
 
 Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
 Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`. `tests/DanglingFixtures/` holds a controller with a deliberately undefined `$ref` (kept out of `tests/Fixtures/` so it doesn't pollute other scan-based tests).

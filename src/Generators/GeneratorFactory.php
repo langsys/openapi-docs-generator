@@ -63,6 +63,7 @@ class GeneratorFactory
             securityOverride: $securityOverride,
             pruneComponents: $pruneComponents,
             validateRefs: $validateRefs,
+            infoOverride: $config['info'] ?? null,
         );
     }
 

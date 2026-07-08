@@ -65,6 +65,13 @@ return [
         |     // set stays auth-consistent with the filter, and restrict advertised
         |     // security schemes to those it names.
         |     'security_override' => [ ['apiKey' => []] ],
+        |
+        |     // Give this set its own identity. Deep-merged over the scanned
+        |     // @OA\Info; unspecified fields (version, contact, …) fall back to it.
+        |     'info' => [
+        |         'title'       => 'Langsys Integration API',
+        |         'description' => 'The API-key-authenticated subset of the Langsys API.',
+        |     ],
         | ],
         |
         | Every set drops components/tags no operation references, so docs never

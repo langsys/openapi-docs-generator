@@ -816,6 +816,22 @@ Because a filtered set is matched by real middleware, its operations should disp
 
 The `integration` spec above then shows `apiKey` on every operation and advertises only the `apiKey` scheme — even if the controllers were annotated with `bearerAuth`.
 
+#### Per-set identity (`info`)
+
+All sets share a single `@OA\Info` annotation, but a subset spec usually wants its own title and description. Add an `info` key to a documentation set to override those fields **for that set only**. It is deep-merged over the scanned `@OA\Info`, so fields you don't specify (`version`, `contact`, `license`, …) fall back to the annotation:
+
+```php
+'integration' => [
+    // ...filter, security_override...
+    'info' => [
+        'title'       => 'Langsys Integration API',
+        'description' => 'The API-key-authenticated subset of the Langsys API.',
+    ],
+],
+```
+
+Supported fields: `title`, `description`, `version`, `termsOfService`, `summary`, and (deep-merged) `contact` / `license`. The `default` set, declaring no `info`, keeps the annotation's values untouched.
+
 #### Custom filters
 
 Implement `Langsys\OpenApiDocsGenerator\Contracts\OperationFilter`:
