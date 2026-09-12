@@ -43,13 +43,17 @@ class ComponentTagPruner
 
     private const OPERATION_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace'];
 
-    public function prune(OA\OpenApi $openapi): void
+    /**
+     * @param  string[]  $extraRoots  Component refs (e.g. "#/components/schemas/ErrorCode")
+     *                                to keep, and walk from, even when no operation references them.
+     */
+    public function prune(OA\OpenApi $openapi, array $extraRoots = []): void
     {
         $usedTagNames = $this->collectUsedTagNames($openapi);
 
         if ($openapi->components !== Generator::UNDEFINED) {
             $index = $this->indexComponents($openapi->components);
-            $used = $this->computeClosure($openapi, $index);
+            $used = $this->computeClosure($openapi, $index, $extraRoots);
             $this->removeUnusedComponents($openapi->components, $used);
         }
 
@@ -84,9 +88,10 @@ class ComponentTagPruner
      * Transitive closure of component refs reachable from paths + security.
      *
      * @param  array<string, object>  $index  ref => component object
+     * @param  string[]  $extraRoots  additional refs seeded into the closure
      * @return array<string, true>  used ref set
      */
-    private function computeClosure(OA\OpenApi $openapi, array $index): array
+    private function computeClosure(OA\OpenApi $openapi, array $index, array $extraRoots = []): array
     {
         $refs = [];
         $securityNames = [];
@@ -106,7 +111,7 @@ class ComponentTagPruner
             $this->collectSecurityNames($openapi->security, $securityNames);
         }
 
-        $worklist = array_keys($refs);
+        $worklist = array_merge(array_keys($refs), $extraRoots);
         foreach (array_keys($securityNames) as $name) {
             $worklist[] = '#/components/securitySchemes/' . $name;
         }

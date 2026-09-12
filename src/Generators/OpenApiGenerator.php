@@ -149,7 +149,14 @@ class OpenApiGenerator
             return;
         }
 
-        (new ComponentTagPruner())->prune($this->openApi);
+        // The error-code enum is a reference page in its own right: keep it even
+        // though no operation $refs it directly.
+        $roots = [];
+        if ($codeSchema = $this->dtoSchemaBuilder->getErrorCodeSchemaName()) {
+            $roots[] = '#/components/schemas/' . $codeSchema;
+        }
+
+        (new ComponentTagPruner())->prune($this->openApi, $roots);
     }
 
     /**
@@ -342,6 +349,62 @@ class OpenApiGenerator
             if (! $this->schemaExists($schema->schema)) {
                 $this->openApi->components->schemas[] = $schema;
             }
+        }
+
+        $this->mergeErrorResponses();
+    }
+
+    /**
+     * Errors discovered by the DTO builder (see getErrorDefinitions()).
+     *
+     * @return \Langsys\OpenApiDocsGenerator\Data\ErrorDefinition[]
+     */
+    public function getErrorDefinitions(): array
+    {
+        return $this->dtoSchemaBuilder->getErrorDefinitions();
+    }
+
+    /**
+     * Emit a reusable `components.responses.{Name}` for every discovered error:
+     * description from the class-level #[Description] (falling back to the
+     * #[ErrorCode] message), `application/json` content `$ref`ing the
+     * `{Name}Response` envelope, and `x-http-status` from #[HttpStatus].
+     * An annotation-defined response with the same name takes precedence.
+     */
+    private function mergeErrorResponses(): void
+    {
+        $definitions = $this->dtoSchemaBuilder->getErrorDefinitions();
+        if ($definitions === []) {
+            return;
+        }
+
+        if ($this->openApi->components->responses === Generator::UNDEFINED) {
+            $this->openApi->components->responses = [];
+        }
+
+        $existing = [];
+        foreach ($this->openApi->components->responses as $response) {
+            if ($response->response !== Generator::UNDEFINED) {
+                $existing[(string) $response->response] = true;
+            }
+        }
+
+        foreach ($definitions as $definition) {
+            if (isset($existing[$definition->schemaName])) {
+                continue;
+            }
+
+            $this->openApi->components->responses[] = new OA\Response([
+                'response' => $definition->schemaName,
+                'description' => $definition->description ?? $definition->message ?? $definition->schemaName,
+                'content' => [
+                    new OA\MediaType([
+                        'mediaType' => 'application/json',
+                        'schema' => new OA\Schema(['ref' => '#/components/schemas/' . $definition->responseSchemaName]),
+                    ]),
+                ],
+                'x' => ['http-status' => $definition->status],
+            ]);
         }
     }
 

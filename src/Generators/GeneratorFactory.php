@@ -26,6 +26,7 @@ class GeneratorFactory
                 customFunctions: $dtoConfig['custom_functions'] ?? [],
             ),
             paginationFields: $dtoConfig['pagination_fields'] ?? [],
+            errorConfig: $config['errors'] ?? [],
         );
 
         $filterConfig = $config['filter'] ?? [];

@@ -23,6 +23,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [Laravel Data v4 (Recommended)](#laravel-data-v4-recommended)
   - [Laravel Data v3 (Legacy)](#laravel-data-v3-legacy)
 - [Auto-Generated Response Schemas](#auto-generated-response-schemas)
+- [API Errors](#api-errors)
 - [Example Generation (Faker)](#example-generation-faker)
 - [Artisan Commands](#artisan-commands)
 - [Configuration Reference](#configuration-reference)
@@ -164,7 +165,7 @@ public int $score,
 
 ### `#[Description]`
 
-Add a description to a property.
+Add a description to a property. It can also be placed on an [API error class](#api-errors), where it becomes the reusable response's description.
 
 ```php
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
@@ -544,6 +545,78 @@ The pagination wrapper fields are configured via `dto.pagination_fields`:
     ['name' => 'records_per_page', 'description' => 'Records per page', 'content' => 8, 'type' => 'int'],
     ['name' => 'page_count', 'description' => 'Number of pages', 'content' => 5, 'type' => 'int'],
     ['name' => 'total_records', 'description' => 'Total items', 'content' => 40, 'type' => 'int'],
+],
+```
+
+## API Errors
+
+Document machine-readable API errors from Spatie Data classes, one per failure mode. Any Data class carrying a class-level `#[ErrorCode]` is treated as an error (there is no base-class or name-suffix requirement):
+
+```php
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
+
+#[ErrorCode('insufficient_balance', 'Insufficient balance to complete this request')]
+#[HttpStatus(402)]
+#[Description('The account balance cannot cover the requested operation.')]
+class InsufficientBalanceError extends Data
+{
+    public function __construct(
+        public int $required,
+        public int $available,
+    ) {}
+}
+```
+
+| Attribute | Target | Purpose |
+|---|---|---|
+| `#[ErrorCode(string $code, ?string $message = null)]` | class | The `code` slug and the default human `error` message. Presence marks the class as an error. |
+| `#[HttpStatus(int $status)]` | class | HTTP status the error is returned with. May be declared on a parent class. |
+| `#[Description('…')]` | class | Description of the reusable response and the entry in the error-code reference. |
+| `#[EnvelopeField]` | property | Emit this property at the top level of the envelope instead of under `details` (e.g. a validation `errors` map). |
+| `#[Throws(Error::class, …)]` | method | Declares which errors a controller action can return. |
+
+For each error class the generator emits:
+
+- **`InsufficientBalanceError`** — the details schema built from the class's non-envelope properties (omitted when there are none).
+- **`InsufficientBalanceErrorResponse`** — the error envelope: `{ status: false, data: [], error: "…", code: "insufficient_balance", details: InsufficientBalanceError }`, with `status`/`error`/`code` required. `data` is typed as an always-empty array; `error` carries the message as its `example`.
+- **`components.responses.InsufficientBalanceError`** — a reusable response (`$ref: '#/components/responses/InsufficientBalanceError'`) with the class description, `application/json` content and an `x-http-status` extension.
+- **`ErrorCode`** — one string enum of every code, whose description lists each code with its HTTP status and description. It is kept through [pruning](#clean-output-automatic-pruning) as the error-codes reference page even when nothing references it directly.
+
+A validation error typically lifts its field map to the envelope:
+
+```php
+#[ErrorCode('validation_failed', 'The given data was invalid')]
+#[HttpStatus(422)]
+class ValidationError extends Data
+{
+    public function __construct(
+        /** @var array<string, string[]> */
+        #[EnvelopeField]
+        public array $errors,
+    ) {}
+}
+// => { status, data, error, code, errors: { <field>: [string] } }
+```
+
+A `@var array<string, T>` docblock on an `array` property is emitted as an `object` with `additionalProperties` (T scalar, `T[]`, or `mixed` for a free-form object); other arrays stay lists.
+
+Generation fails with a clear message when an error class has no `#[HttpStatus]` or two classes declare the same code.
+
+The envelope is configurable per documentation set under `errors` so each app can keep its own shape. A `null` field name omits that field:
+
+```php
+'errors' => [
+    'paths' => null,            // extra directories to scan; null = same as DTO discovery
+    'code_schema' => 'ErrorCode',
+    'fields' => [
+        'status' => 'status',
+        'data' => 'data',
+        'error' => 'error',
+        'code' => 'code',
+        'details' => 'details',
+    ],
 ],
 ```
 

@@ -347,3 +347,43 @@ test('abstract Data subclasses are skipped from auto-schema generation', functio
 
     expect($names)->not->toContain('AbstractBlock');
 });
+
+describe('string-keyed map docblocks', function () {
+    it('emits array<string, T> docblock properties as object with additionalProperties', function () {
+        $dir = sys_get_temp_dir() . '/openapi-map-' . uniqid();
+        mkdir($dir);
+        file_put_contents($dir . '/MapData.php', <<<'PHP'
+<?php
+namespace MapDocblockFixture;
+use Spatie\LaravelData\Data;
+class MapData extends Data
+{
+    public function __construct(
+        /** @var array<string, string[]> */
+        public array $messages,
+        /** @var array<string, int> */
+        public array $counts,
+        /** @var array<string, mixed> */
+        public array $meta,
+        /** @var array<int, string> */
+        public array $list,
+        public array $plain,
+    ) {}
+}
+PHP);
+        require_once $dir . '/MapData.php';
+
+        $builder = new DtoSchemaBuilder($dir, new ExampleGenerator([], []), []);
+        $schema = json_decode(json_encode($builder->buildAll()[0]), true);
+        $props = $schema['properties'];
+
+        expect($props['messages'])->toMatchArray(['type' => 'object', 'additionalProperties' => ['type' => 'array', 'items' => ['type' => 'string']]])
+            ->and($props['counts'])->toMatchArray(['type' => 'object', 'additionalProperties' => ['type' => 'integer']])
+            ->and($props['meta']['type'])->toBe('object')
+            ->and($props['list']['type'])->toBe('array')
+            ->and($props['plain']['type'])->toBe('array');
+
+        array_map('unlink', glob($dir . '/*'));
+        rmdir($dir);
+    });
+});
