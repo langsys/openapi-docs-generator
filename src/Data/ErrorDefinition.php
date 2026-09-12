@@ -3,10 +3,12 @@
 namespace Langsys\OpenApiDocsGenerator\Data;
 
 /**
- * An API error discovered from a Spatie Data class carrying #[ErrorCode].
+ * An API error discovered from a concrete subclass of `errors.base_class`, with its
+ * identity read from the class's CODE, MESSAGE and STATUS constants.
  *
  * Produced by DtoSchemaBuilder; consumed by OpenApiGenerator to emit
- * components.responses.{schemaName} and (L2) to attach errors to operations.
+ * components.responses.{schemaName} and scope error documentation, and by
+ * OperationErrorAttacher to attach errors to operations.
  */
 final class ErrorDefinition
 {
@@ -19,14 +21,12 @@ final class ErrorDefinition
         public readonly string $responseSchemaName,
         /** Error object schema name, e.g. "InsufficientBalanceErrorBody". */
         public readonly string $bodySchemaName,
-        /** snake_case code from #[ErrorCode]. */
+        /** The CODE constant: the slug clients branch on. */
         public readonly string $code,
-        /** Default human message from #[ErrorCode], if any. */
-        public readonly ?string $message,
-        /** HTTP status from #[HttpStatus]. */
+        /** The MESSAGE constant: the default human message, and the documentation text. */
+        public readonly string $message,
+        /** The STATUS constant, resolved to an int (enum cases read via ->value). */
         public readonly int $status,
-        /** Class-level #[Description], if any. */
-        public readonly ?string $description,
         /** Whether the class has non-envelope properties (i.e. a details schema exists). */
         public readonly bool $hasDetails,
     ) {

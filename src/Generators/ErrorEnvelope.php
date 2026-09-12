@@ -94,7 +94,7 @@ final class ErrorEnvelope
     }
 
     /**
-     * `{Name}Body`, the error object: `message` (the #[ErrorCode] message as its
+     * `{Name}Body`, the error object: `message` (the class's MESSAGE as its
      * example), `code` (an enum of the one code), `details` (a `$ref` to the details
      * schema, when the class has one), then the class's #[EnvelopeField] properties.
      *
@@ -127,7 +127,7 @@ final class ErrorEnvelope
                 'property' => $name,
                 'type' => 'string',
                 'description' => 'Human-readable error message',
-                'example' => $definition->message ?? $definition->description ?? $definition->code,
+                'example' => $definition->message,
             ]);
             $required[] = $name;
         }

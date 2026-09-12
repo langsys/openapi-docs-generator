@@ -61,6 +61,31 @@ class ComponentTagPruner
     }
 
     /**
+     * Component refs reachable from the operations (paths + webhooks) and security
+     * requirements, plus any extra roots, following `$ref`s transitively. Includes
+     * refs to components that aren't defined.
+     *
+     * @param  string[]  $extraRoots
+     * @return array<string, true>
+     */
+    public function reachableRefs(OA\OpenApi $openapi, array $extraRoots = []): array
+    {
+        $index = $openapi->components === Generator::UNDEFINED ? [] : $this->indexComponents($openapi->components);
+
+        return $this->computeClosure($openapi, $index, $extraRoots);
+    }
+
+    /**
+     * Refs of every named component in the document, e.g. "#/components/schemas/User".
+     *
+     * @return array<int, string>
+     */
+    public function componentRefs(OA\OpenApi $openapi): array
+    {
+        return $openapi->components === Generator::UNDEFINED ? [] : array_keys($this->indexComponents($openapi->components));
+    }
+
+    /**
      * @return array<string, object>  ref => component object
      */
     private function indexComponents(OA\Components $components): array

@@ -14,8 +14,8 @@ use ReflectionMethod;
  * service contract — belongs in a rule the app owns, so the library never has to
  * guess at an implementation idiom it cannot verify.
  *
- * Returned classes are resolved the same way declared ones are: each must carry
- * #[ErrorCode] and have been scanned, or generation fails naming the operation.
+ * Returned classes are resolved the same way declared ones are: each must be a
+ * scanned error class, or generation fails naming the operation.
  */
 interface ImpliedErrorRule
 {

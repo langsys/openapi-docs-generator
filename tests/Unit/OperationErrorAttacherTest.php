@@ -8,8 +8,10 @@ use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
+use Langsys\OpenApiDocsGenerator\Generators\ErrorContract;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OperationErrorAttacher;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError as ForbiddenStandIn;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\AttacherFixtureController;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\NoopRule;
@@ -38,6 +40,7 @@ function allErrorDefinitions(): array
         [dirname(__DIR__) . '/ErrorFixtures', dirname(__DIR__) . '/ErrorOperationFixtures'],
         new ExampleGenerator([], []),
         [],
+        ['base_class' => ApiError::class],
     );
     $builder->buildAll();
 
@@ -151,7 +154,7 @@ it('builds the shared-status response from the envelope the schemas were built w
         [dirname(__DIR__) . '/ErrorFixtures', dirname(__DIR__) . '/ErrorOperationFixtures'],
         new ExampleGenerator([], []),
         [],
-        ['response_fields' => ['error' => 'failure'], 'error_fields' => ['code' => 'reason']],
+        ['base_class' => ApiError::class, 'response_fields' => ['error' => 'failure'], 'error_fields' => ['code' => 'reason']],
     );
     $builder->buildAll();
 
@@ -285,17 +288,23 @@ it('leaves operations without a controller context alone', function () {
     expect((new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions()))->toBe(0);
 });
 
-it('fails with a clear message when #[Throws] names a class without #[ErrorCode]', function () {
+it('fails with a clear message when #[Throws] names a class that is not an error class', function () {
+    $operation = operationFor(attacherController(), 'notAnError');
+
+    (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions(), null, new ErrorContract(ApiError::class));
+})->throws(OpenApiDocsException::class, 'is not an error class: it must be a concrete subclass of errors.base_class');
+
+it('fails when a declared error class was never scanned', function () {
+    $operation = operationFor(attacherController(), 'single');
+
+    (new OperationErrorAttacher())->attach(docFor($operation), [], null, new ErrorContract(ApiError::class));
+})->throws(OpenApiDocsException::class, 'was never scanned; add its directory');
+
+it('fails with a message covering both causes when no contract is given', function () {
     $operation = operationFor(attacherController(), 'notAnError');
 
     (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
-})->throws(OpenApiDocsException::class, 'carries no #[ErrorCode]');
-
-it('fails when a declared error carries #[ErrorCode] but was never scanned', function () {
-    $operation = operationFor(attacherController(), 'single');
-
-    (new OperationErrorAttacher())->attach(docFor($operation), []);
-})->throws(OpenApiDocsException::class, 'was never scanned; add its directory');
+})->throws(OpenApiDocsException::class, 'is not a documented error class');
 
 it('does nothing when the document has no paths', function () {
     $openapi = new OA\OpenApi(['info' => new OA\Info(['title' => 'T', 'version' => '1.0'])]);

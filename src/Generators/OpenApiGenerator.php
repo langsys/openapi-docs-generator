@@ -2,6 +2,7 @@
 
 namespace Langsys\OpenApiDocsGenerator\Generators;
 
+use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Data\SelectionReport;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use OpenApi\Annotations as OA;
@@ -58,6 +59,9 @@ class OpenApiGenerator
         private ?OperationErrorAttacher $errorAttacher = null,
     ) {}
 
+    /** Name of the error-code enum added by scopeErrorsToOperations(); kept as a prune root. */
+    private ?string $errorCodeSchemaName = null;
+
     /**
      * The report from the last operation-selection pass, or null if no filter ran.
      */
@@ -92,6 +96,7 @@ class OpenApiGenerator
         $this->buildAndMergeDtoSchemas();
         $this->attachOperationErrors();
         $this->enrichEndpointParameters();
+        $this->scopeErrorsToOperations();
         $this->pruneComponentsAndTags();
         $this->populateServers();
         $this->applyInfoOverride();
@@ -153,10 +158,7 @@ class OpenApiGenerator
 
         // The error-code enum is a reference page in its own right: keep it even
         // though no operation $refs it directly.
-        $roots = [];
-        if ($codeSchema = $this->dtoSchemaBuilder->getErrorCodeSchemaName()) {
-            $roots[] = '#/components/schemas/' . $codeSchema;
-        }
+        $roots = $this->errorCodeSchemaName === null ? [] : ['#/components/schemas/' . $this->errorCodeSchemaName];
 
         (new ComponentTagPruner())->prune($this->openApi, $roots);
     }
@@ -370,6 +372,7 @@ class OpenApiGenerator
             $this->openApi,
             $this->dtoSchemaBuilder->getErrorDefinitions(),
             $this->dtoSchemaBuilder->getErrorEnvelope(),
+            $this->dtoSchemaBuilder->getErrorContract(),
         );
     }
 
@@ -385,10 +388,10 @@ class OpenApiGenerator
 
     /**
      * Emit a reusable `components.responses.{Name}` for every discovered error:
-     * description from the class-level #[Description] (falling back to the
-     * #[ErrorCode] message), `application/json` content `$ref`ing the
-     * `{Name}Response` envelope, and `x-http-status` from #[HttpStatus].
+     * the class's MESSAGE as description, `application/json` content `$ref`ing
+     * the `{Name}Response` envelope, and `x-http-status` from its STATUS.
      * An annotation-defined response with the same name takes precedence.
+     * Errors no operation references are removed later by scopeErrorsToOperations().
      */
     private function mergeErrorResponses(): void
     {
@@ -415,7 +418,7 @@ class OpenApiGenerator
 
             $this->openApi->components->responses[] = new OA\Response([
                 'response' => $definition->schemaName,
-                'description' => $definition->description ?? $definition->message ?? $definition->schemaName,
+                'description' => $definition->message,
                 'content' => [
                     new OA\MediaType([
                         'mediaType' => 'application/json',
@@ -425,6 +428,109 @@ class OpenApiGenerator
                 'x' => ['http-status' => $definition->status],
             ]);
         }
+    }
+
+    /**
+     * Document only the errors the documentation set's operations reference.
+     *
+     * An error no operation can return is an internal failure mode, not API
+     * surface. Its components (details, Body, Response, components.responses) are
+     * removed whether or not `prune_unused_components` is on, and the error-code
+     * enum is added listing exactly the errors that remain, so each set publishes
+     * an honest code list. Reachability is the `$ref` closure from the operations,
+     * which counts #[Throws], implied errors and hand-written refs alike. With
+     * pruning off, every kept non-error component is a root too, so a schema that
+     * stays is never left pointing at a removed error.
+     */
+    private function scopeErrorsToOperations(): void
+    {
+        $this->errorCodeSchemaName = null;
+        $definitions = $this->dtoSchemaBuilder->getErrorDefinitions();
+
+        if ($definitions === [] || $this->openApi->components === Generator::UNDEFINED) {
+            return;
+        }
+
+        $pruner = new ComponentTagPruner();
+
+        $errorRefs = [];
+        foreach ($definitions as $definition) {
+            foreach ($this->errorComponentRefs($definition) as $ref) {
+                $errorRefs[$ref] = true;
+            }
+        }
+
+        $roots = [];
+        if (! $this->pruneComponents) {
+            foreach ($pruner->componentRefs($this->openApi) as $ref) {
+                if (! isset($errorRefs[$ref])) {
+                    $roots[] = $ref;
+                }
+            }
+        }
+
+        $reachable = $pruner->reachableRefs($this->openApi, $roots);
+        $unreachable = array_diff_key($errorRefs, $reachable);
+
+        foreach (['schemas' => ['schemas', 'schema'], 'responses' => ['responses', 'response']] as $property => [$segment, $nameProperty]) {
+            $collection = $this->openApi->components->{$property};
+
+            if ($collection === Generator::UNDEFINED || ! is_array($collection)) {
+                continue;
+            }
+
+            $kept = array_values(array_filter(
+                $collection,
+                static function (object $component) use ($segment, $nameProperty, $unreachable): bool {
+                    $name = $component->{$nameProperty};
+
+                    return ! (is_string($name) && isset($unreachable['#/components/' . $segment . '/' . $name]));
+                },
+            ));
+
+            $this->openApi->components->{$property} = $kept === [] ? Generator::UNDEFINED : $kept;
+        }
+
+        $documented = array_values(array_filter(
+            $definitions,
+            static fn (ErrorDefinition $definition): bool => isset($reachable['#/components/schemas/' . $definition->bodySchemaName]),
+        ));
+
+        $enum = $this->dtoSchemaBuilder->buildErrorCodeSchema($documented);
+
+        if ($enum === null) {
+            return;
+        }
+
+        if ($this->openApi->components->schemas === Generator::UNDEFINED) {
+            $this->openApi->components->schemas = [];
+        }
+
+        if (! $this->schemaExists($enum->schema)) {
+            $this->openApi->components->schemas[] = $enum;
+        }
+
+        $this->errorCodeSchemaName = $enum->schema;
+    }
+
+    /**
+     * Refs of the components generated for one error.
+     *
+     * @return array<int, string>
+     */
+    private function errorComponentRefs(ErrorDefinition $definition): array
+    {
+        $refs = [
+            '#/components/schemas/' . $definition->bodySchemaName,
+            '#/components/schemas/' . $definition->responseSchemaName,
+            '#/components/responses/' . $definition->schemaName,
+        ];
+
+        if ($definition->hasDetails) {
+            $refs[] = '#/components/schemas/' . $definition->schemaName;
+        }
+
+        return $refs;
     }
 
     /**

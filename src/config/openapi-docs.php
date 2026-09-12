@@ -128,15 +128,26 @@ return [
         ],
 
         // --- API Errors ---
-        // Any Data class carrying a class-level #[ErrorCode] (with #[HttpStatus]
-        // and optionally #[Description]) is an API error. Its response is
+        // Every non-abstract subclass of `base_class` is an API error. Each one
+        // declares its identity with class constants:
+        //   public const CODE = 'not_found';             // declared by the class itself
+        //   public const MESSAGE = 'Resource not found'; // declared by the class itself; also the docs text
+        //   public const STATUS = 404;                   // int or int-backed enum; may be inherited
+        // Its response is
         //   { status: false, data: [], error: { message, code, details, ... } }
-        // and for each one the generator emits the `{Name}` details schema, the
-        // `{Name}Body` error object, the `{Name}Response` envelope, a reusable
+        // For each error the documentation set's operations reference, the
+        // generator emits the `{Name}` details schema, the `{Name}Body` error
+        // object, the `{Name}Response` envelope, a reusable
         // `components.responses.{Name}` (with `x-http-status`), and a shared
-        // string-enum schema of every code that doubles as the error-codes
-        // reference page.
+        // string-enum schema of those codes that doubles as the error-codes
+        // reference page. Unreferenced errors are left out even when
+        // `prune_unused_components` is false.
         'errors' => [
+            // The abstract base class your error classes extend (a class name, or
+            // a list of them). null disables error documentation.
+            // e.g. \App\Http\Errors\ApiError::class
+            'base_class' => null,
+
             // Extra directories to scan for error classes. null = the same
             // directories as DTO discovery (`paths.annotations`).
             'paths' => null,
@@ -155,7 +166,7 @@ return [
             ],
 
             // Field names inside the error object. null omits a field; `code` cannot be null.
-            //   message -> string, the #[ErrorCode] message as example
+            //   message -> string, the class's MESSAGE as example
             //   code    -> string enum of the single code
             //   details -> $ref to the `{Name}` details schema (omitted when the
             //              class has no non-#[EnvelopeField] properties)

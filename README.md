@@ -24,6 +24,8 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [Laravel Data v3 (Legacy)](#laravel-data-v3-legacy)
 - [Auto-Generated Response Schemas](#auto-generated-response-schemas)
 - [API Errors](#api-errors)
+  - [The Error Class Contract](#the-error-class-contract)
+  - [The Error Response](#the-error-response)
   - [Attaching Errors to Operations](#attaching-errors-to-operations)
 - [Example Generation (Faker)](#example-generation-faker)
 - [Artisan Commands](#artisan-commands)
@@ -166,7 +168,7 @@ public int $score,
 
 ### `#[Description]`
 
-Add a description to a property. It can also be placed on an [API error class](#api-errors), where it becomes the reusable response's description.
+Add a description to a property.
 
 ```php
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
@@ -551,32 +553,61 @@ The pagination wrapper fields are configured via `dto.pagination_fields`:
 
 ## API Errors
 
-Document machine-readable API errors from Spatie Data classes, one per failure mode. Any Data class carrying a class-level `#[ErrorCode]` is treated as an error (there is no base-class or name-suffix requirement):
+Document machine-readable API errors from Spatie Data classes, one class per failure mode. Point the generator at your abstract error base class, and every concrete subclass becomes a documented error:
 
 ```php
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
+'errors' => [
+    'base_class' => \App\Http\Errors\ApiError::class,
+],
+```
 
-#[ErrorCode('insufficient_balance', 'Insufficient balance to complete this request')]
-#[HttpStatus(402)]
-#[Description('The account balance cannot cover the requested operation.')]
-class InsufficientBalanceError extends Data
+### The Error Class Contract
+
+An error class declares its identity with three constants:
+
+```php
+abstract class ApiError extends Data {}
+
+class NotFoundError extends ApiError
 {
-    public function __construct(
-        public int $required,
-        public int $available,
-    ) {}
+    public const CODE = 'not_found';
+    public const MESSAGE = 'Resource not found';
+    public const STATUS = 404;          // or an int-backed enum case, e.g. HttpCode::NOT_FOUND
+}
+
+class ProjectNotFoundError extends NotFoundError
+{
+    public const CODE = 'project_not_found';
+    public const MESSAGE = 'No project with that id';
+    // STATUS is inherited from NotFoundError
 }
 ```
 
+| Constant | Type | Rule |
+|---|---|---|
+| `CODE` | string | The slug clients branch on. Every concrete error class declares its own. |
+| `MESSAGE` | string | The default human message, and the documentation text. Every concrete error class declares its own. |
+| `STATUS` | int, or an int-backed enum | The HTTP status. May be inherited, which is what a specific error's parent is for. |
+
+Typed class constants such as `public const string CODE` work too, on PHP 8.3 and later.
+
+Constants inherit silently, so a subclass that forgot to redeclare `CODE` would share its parent's code without anyone noticing. Generation therefore fails, before anything is written, when:
+
+- a concrete error class inherits `CODE` or `MESSAGE` instead of declaring it;
+- two error classes declare the same `CODE`;
+- no `STATUS` can be resolved, or it is not an HTTP status between 100 and 599;
+- an error class carries a class-level `#[Description]`, because `MESSAGE` already documents it;
+- an `#[EnvelopeField]` property reuses an error-object field name.
+
+Public properties are the error's typed details. These attributes work with errors:
+
 | Attribute | Target | Purpose |
 |---|---|---|
-| `#[ErrorCode(string $code, ?string $message = null)]` | class | The `code` slug and the default human `message`. Presence marks the class as an error. |
-| `#[HttpStatus(int $status)]` | class | HTTP status the error is returned with. May be declared on a parent class. |
-| `#[Description('…')]` | class | Description of the reusable response and the entry in the error-code reference. |
-| `#[EnvelopeField]` | property | Emit this property at the top level of the `error` object instead of under `details` (e.g. a validation `errors` map). |
-| `#[Throws(Error::class, …)]` | method, class | Declares which errors a controller action, or every action of a controller, can return. |
+| `#[EnvelopeField]` | property | Emit this property at the top level of the `error` object instead of under `details`, e.g. a validation `errors` map. |
+| `#[Description('…')]` | property | Describe a details or envelope property. |
+| `#[Throws(Error::class, …)]` | method, class | Declare which errors a controller action, or every action of a controller, can return. |
+
+### The Error Response
 
 An error response carries everything inside one `error` object:
 
@@ -592,23 +623,27 @@ An error response carries everything inside one `error` object:
 }
 ```
 
-For each error class the generator emits:
+For each error the operations reference, the generator emits:
 
 - **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
-- **`InsufficientBalanceErrorBody`**: the error object. `message` carries the `#[ErrorCode]` message as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
+- **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
 - **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array, and `error` references the body. `status` and `error` are required.
-- **`components.responses.InsufficientBalanceError`**: a reusable response with the class description, `application/json` content and an `x-http-status` extension.
-- **`ErrorCode`**: one string enum of every code, whose description lists each code with its HTTP status and description. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even when nothing references it directly.
+- **`components.responses.InsufficientBalanceError`**: a reusable response with `MESSAGE` as its description, `application/json` content and an `x-http-status` extension.
+- **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and `MESSAGE`. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
+
+**Only referenced errors are documented.** An error no operation can return is an internal failure mode, not API surface. Its schemas and response are left out whether or not `prune_unused_components` is on, and the `ErrorCode` enum lists exactly the errors that remain, so each documentation set publishes an honest code list. An error counts as referenced when an operation reaches it through `#[Throws]`, `implied_errors`, or a hand-written `$ref`. With pruning off, a schema you keep that references an error keeps that error too, so no reference is ever left dangling.
 
 The schemas are open, with no `additionalProperties: false`. An app can add fields it chooses not to document, such as debug output for allow-listed developers, without failing response validation.
 
 A validation error typically lifts its field map into the error object:
 
 ```php
-#[ErrorCode('validation_failed', 'The given data was invalid')]
-#[HttpStatus(422)]
-class ValidationError extends Data
+class ValidationFailedError extends ApiError
 {
+    public const CODE = 'validation_failed';
+    public const MESSAGE = 'The given data was invalid';
+    public const STATUS = 422;
+
     public function __construct(
         /** @var array<string, string[]> */
         #[EnvelopeField]
@@ -620,12 +655,11 @@ class ValidationError extends Data
 
 A `@var array<string, T>` docblock on an `array` property is emitted as an `object` with `additionalProperties` (T scalar, `T[]`, or `mixed` for a free-form object); other arrays stay lists.
 
-Generation fails with a clear message when an error class has no `#[HttpStatus]`, two classes declare the same code, or an `#[EnvelopeField]` property reuses an error-object field name.
-
 Field names are configurable per documentation set under `errors`, so each app can keep its own naming. A `null` name omits that field. Unknown keys and duplicate names fail generation, so a typo cannot silently fall back to a default:
 
 ```php
 'errors' => [
+    'base_class' => \App\Http\Errors\ApiError::class, // or a list; null disables errors
     'paths' => null,            // extra directories to scan; null = same as DTO discovery
     'code_schema' => 'ErrorCode',
 
@@ -716,7 +750,7 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | One | `$ref` to `#/components/responses/{Name}` |
 | Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. |
 
-A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]` or `implied_errors` names a class that is not a documented error (no `#[ErrorCode]`, or never scanned — the message says which).
+A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]`, `implied_errors` or a rule names a class that is not a documented error: not a concrete subclass of `errors.base_class`, or never scanned. The message says which.
 
 ## Example Generation (Faker)
 

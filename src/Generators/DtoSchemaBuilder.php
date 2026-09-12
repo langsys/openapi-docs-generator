@@ -8,10 +8,8 @@ use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\EnvelopeField;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\GroupedCollection;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\ItemType;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Omit;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\OneOfItemsFrom;
@@ -51,6 +49,7 @@ class DtoSchemaBuilder
      * ErrorEnvelope owns (`response_fields`, `error_fields`).
      */
     public const DEFAULT_ERROR_CONFIG = [
+        'base_class' => null,
         'paths' => null,
         'code_schema' => 'ErrorCode',
     ];
@@ -60,6 +59,9 @@ class DtoSchemaBuilder
 
     /** The error response shape; shared with OperationErrorAttacher via getErrorEnvelope(). */
     private ErrorEnvelope $errorEnvelope;
+
+    /** The error class contract: discovery by base class, identity from constants. */
+    private ErrorContract $errorContract;
 
     /** @var ErrorDefinition[] Populated by buildAll(), keyed by class name. */
     private array $errorDefinitions = [];
@@ -77,6 +79,7 @@ class DtoSchemaBuilder
         $this->dtoPaths = (array) $dtoPaths;
         $this->errorConfig = array_replace(self::DEFAULT_ERROR_CONFIG, $errorConfig);
         $this->errorEnvelope = new ErrorEnvelope($errorConfig);
+        $this->errorContract = new ErrorContract($this->errorConfig['base_class']);
     }
 
     /**
@@ -90,12 +93,11 @@ class DtoSchemaBuilder
     }
 
     /**
-     * Name of the shared error-code enum schema (`errors.code_schema`), or null
-     * when no error classes were discovered.
+     * Name of the error-code enum schema (`errors.code_schema`, default "ErrorCode").
      */
-    public function getErrorCodeSchemaName(): ?string
+    public function getErrorCodeSchemaName(): string
     {
-        return $this->errorDefinitions === [] ? null : (string) $this->errorConfig['code_schema'];
+        return (string) $this->errorConfig['code_schema'];
     }
 
     /**
@@ -105,6 +107,15 @@ class DtoSchemaBuilder
     public function getErrorEnvelope(): ErrorEnvelope
     {
         return $this->errorEnvelope;
+    }
+
+    /**
+     * The error class contract this builder discovers and reads errors with, so the
+     * attacher can say precisely why a declared class is not a documented error.
+     */
+    public function getErrorContract(): ErrorContract
+    {
+        return $this->errorContract;
     }
 
     /**
@@ -137,9 +148,8 @@ class DtoSchemaBuilder
 
         $schemas = array_merge($schemas, $this->buildOneOfItemSchemas());
 
-        if ($errorCodeSchema = $this->buildErrorCodeSchema()) {
-            $schemas[] = $errorCodeSchema;
-        }
+        // The error-code enum is not built here: OpenApiGenerator builds it with
+        // buildErrorCodeSchema() once it knows which errors the operations reference.
 
         return $schemas;
     }
@@ -1081,15 +1091,15 @@ class DtoSchemaBuilder
     }
 
     // -------------------------------------------------------------------------
-    // Error DTOs (#[ErrorCode])
+    // Error DTOs (see ErrorContract)
     // -------------------------------------------------------------------------
 
     /**
-     * Discovery rule: any Data class carrying a class-level #[ErrorCode] is an error.
+     * Discovery rule: every non-abstract subclass of `errors.base_class` is an error.
      */
     private function isErrorClass(string $className): bool
     {
-        return (new ReflectionClass($className))->getAttributes(ErrorCode::class) !== [];
+        return $this->errorContract->isErrorClass($className);
     }
 
     /**
@@ -1099,30 +1109,18 @@ class DtoSchemaBuilder
      * generator (components.responses) and the operation attacher.
      *
      * @return OA\Schema[]
-     * @throws OpenApiDocsException on a duplicate code or a missing #[HttpStatus]
+     * @throws OpenApiDocsException on a broken error class contract or a duplicate code
      */
     private function buildErrorSchemas(string $className): array
     {
         $reflection = new ReflectionClass($className);
-
-        /** @var ErrorCode $errorCode */
-        $errorCode = $reflection->getAttributes(ErrorCode::class)[0]->newInstance();
-        $httpStatus = $this->findClassAttribute($reflection, HttpStatus::class);
-        $description = $this->findClassAttribute($reflection, Description::class);
-
-        if ($httpStatus === null) {
-            throw new OpenApiDocsException(sprintf(
-                'Error class %s carries #[ErrorCode(\'%s\')] but no #[HttpStatus]; add #[HttpStatus(<int>)] to it (or a parent class).',
-                $className,
-                $errorCode->code,
-            ));
-        }
+        ['code' => $code, 'message' => $message, 'status' => $status] = $this->errorContract->read($reflection);
 
         foreach ($this->errorDefinitions as $existing) {
-            if ($existing->code === $errorCode->code) {
+            if ($existing->code === $code) {
                 throw new OpenApiDocsException(sprintf(
                     'Duplicate error code \'%s\': declared by both %s and %s.',
-                    $errorCode->code,
+                    $code,
                     $existing->className,
                     $className,
                 ));
@@ -1137,10 +1135,9 @@ class DtoSchemaBuilder
             schemaName: $schemaName,
             responseSchemaName: $schemaName . 'Response',
             bodySchemaName: $schemaName . 'Body',
-            code: $errorCode->code,
-            message: $errorCode->message,
-            status: $httpStatus->status,
-            description: $description?->content,
+            code: $code,
+            message: $message,
+            status: $status,
             hasDetails: $detailsSchema !== null,
         );
         $this->errorDefinitions[$className] = $definition;
@@ -1180,31 +1177,30 @@ class DtoSchemaBuilder
     }
 
     /**
-     * Build the shared error-code enum schema (`errors.code_schema`, default
-     * "ErrorCode"): every discovered code, with a description listing each code,
-     * its HTTP status and its class description — the error-codes reference.
+     * Build the error-code enum schema (`errors.code_schema`, default "ErrorCode")
+     * for the given errors: their codes, with a description listing each code, its
+     * HTTP status and its MESSAGE, which makes it the error-codes reference page.
+     * OpenApiGenerator passes only the errors the documentation set's operations
+     * reference, so each set's code list is honest.
+     *
+     * @param  array<int, ErrorDefinition>  $definitions
      */
-    private function buildErrorCodeSchema(): ?OA\Schema
+    public function buildErrorCodeSchema(array $definitions): ?OA\Schema
     {
-        if ($this->errorDefinitions === []) {
+        if ($definitions === []) {
             return null;
         }
 
-        $definitions = array_values($this->errorDefinitions);
+        $definitions = array_values($definitions);
         usort($definitions, static fn (ErrorDefinition $a, ErrorDefinition $b): int => $a->code <=> $b->code);
 
         $lines = array_map(
-            static fn (ErrorDefinition $d): string => sprintf(
-                '- `%s` (HTTP %d): %s',
-                $d->code,
-                $d->status,
-                $d->description ?? $d->message ?? $d->schemaName,
-            ),
+            static fn (ErrorDefinition $d): string => sprintf('- `%s` (HTTP %d): %s', $d->code, $d->status, $d->message),
             $definitions,
         );
 
         return new OA\Schema([
-            'schema' => (string) $this->errorConfig['code_schema'],
+            'schema' => $this->getErrorCodeSchemaName(),
             'type' => 'string',
             'description' => 'Machine-readable error codes returned in `'
                 . $this->errorEnvelope->codePath()
@@ -1212,25 +1208,6 @@ class DtoSchemaBuilder
             'enum' => array_map(static fn (ErrorDefinition $d): string => $d->code, $definitions),
             'example' => $definitions[0]->code,
         ]);
-    }
-
-    /**
-     * Find a class-level attribute on the class or, failing that, its nearest parent.
-     *
-     * @template T of object
-     * @param class-string<T> $attributeClass
-     * @return T|null
-     */
-    private function findClassAttribute(ReflectionClass $reflection, string $attributeClass): ?object
-    {
-        for ($class = $reflection; $class !== false; $class = $class->getParentClass()) {
-            $attributes = $class->getAttributes($attributeClass);
-            if ($attributes !== []) {
-                return $attributes[0]->newInstance();
-            }
-        }
-
-        return null;
     }
 
     // -------------------------------------------------------------------------

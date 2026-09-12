@@ -8,7 +8,8 @@ use Attribute;
  * Declares which error DTOs a controller action can respond with. Placed on a
  * controller class instead, it applies to every action of that controller.
  *
- * Each class must carry #[ErrorCode]; naming a class without it fails generation.
+ * Each class must be an error class (a concrete subclass of errors.base_class);
+ * naming any other class fails generation.
  *
  * @example #[Throws(InsufficientBalanceError::class, ProjectNotFoundError::class)]
  */

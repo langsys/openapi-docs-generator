@@ -2,10 +2,9 @@
 
 namespace Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures;
 
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
-
-#[ErrorCode('unauthenticated', 'Unauthenticated')]
+/** Inherits STATUS from an abstract parent. */
 class UnauthenticatedError extends BaseAuthError
 {
+    public const CODE = 'unauthenticated';
+    public const MESSAGE = 'Unauthenticated';
 }

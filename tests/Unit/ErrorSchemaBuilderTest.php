@@ -4,16 +4,24 @@ use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
-use OpenApi\Generator;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 
 function errorFixturesDir(): string
 {
     return dirname(__DIR__) . '/ErrorFixtures';
 }
 
-function makeErrorBuilder(array $errorConfig = [], ?string $dir = null): DtoSchemaBuilder
+/**
+ * @param  string|string[]|null  $dirs  Directories to scan; defaults to the error fixtures.
+ */
+function makeErrorBuilder(array $errorConfig = [], string|array|null $dirs = null): DtoSchemaBuilder
 {
-    return new DtoSchemaBuilder($dir ?? errorFixturesDir(), new ExampleGenerator([], []), [], $errorConfig);
+    return new DtoSchemaBuilder(
+        $dirs ?? errorFixturesDir(),
+        new ExampleGenerator([], []),
+        [],
+        array_merge(['base_class' => ApiError::class], $errorConfig),
+    );
 }
 
 /** @return array<string, array> schema name => decoded JSON */
@@ -37,36 +45,208 @@ function propsOf(array $schema): array
     return $props;
 }
 
-it('discovers error classes by #[ErrorCode] presence and records definitions', function () {
-    $builder = makeErrorBuilder();
+function jsonOf(?object $schema): ?array
+{
+    return $schema === null ? null : json_decode(json_encode($schema), true);
+}
+
+/** @return array<string, ErrorDefinition> code => definition, sorted by code */
+function definitionsByCode(DtoSchemaBuilder $builder): array
+{
     $builder->buildAll();
 
-    $defs = collect($builder->getErrorDefinitions())->keyBy('code');
+    $out = [];
+    foreach ($builder->getErrorDefinitions() as $definition) {
+        $out[$definition->code] = $definition;
+    }
+    ksort($out);
 
-    expect($defs)->toHaveCount(3)
-        ->and($defs->keys()->sort()->values()->all())->toBe(['insufficient_balance', 'unauthenticated', 'validation_failed']);
+    return $out;
+}
 
-    /** @var ErrorDefinition $balance */
+/**
+ * Write one class declaration into its own temp directory, in a unique namespace,
+ * and load it. The declaration can use ApiError, NotFoundError, Description and
+ * EnvelopeField unqualified.
+ */
+function errorClassDir(string $declaration): string
+{
+    $dir = sys_get_temp_dir() . '/openapi-contract-' . str_replace('.', '', uniqid('', true));
+    mkdir($dir);
+    $namespace = 'ErrorContractFixture\\N' . str_replace('.', '', uniqid('', true));
+    $file = $dir . '/Fixture.php';
+
+    file_put_contents($file, implode("\n", [
+        '<?php',
+        "namespace {$namespace};",
+        'use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Description;',
+        'use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\EnvelopeField;',
+        'use Langsys\\OpenApiDocsGenerator\\Tests\\ErrorFixtures\\ApiError;',
+        'use Langsys\\OpenApiDocsGenerator\\Tests\\ErrorFixtures\\NotFoundError;',
+        '',
+        $declaration,
+        '',
+    ]));
+    require_once $file;
+
+    return $dir;
+}
+
+function removeErrorClassDir(string $dir): void
+{
+    array_map('unlink', glob($dir . '/*'));
+    rmdir($dir);
+}
+
+// -----------------------------------------------------------------------------
+// Discovery and the constants contract
+// -----------------------------------------------------------------------------
+
+it('discovers every concrete subclass of errors.base_class and reads its constants', function () {
+    $defs = definitionsByCode(makeErrorBuilder());
+
+    expect(array_keys($defs))->toBe(['insufficient_balance', 'not_found', 'project_not_found', 'unauthenticated', 'validation_failed']);
+
     $balance = $defs['insufficient_balance'];
     expect($balance->schemaName)->toBe('InsufficientBalanceError')
         ->and($balance->responseSchemaName)->toBe('InsufficientBalanceErrorResponse')
+        ->and($balance->bodySchemaName)->toBe('InsufficientBalanceErrorBody')
         ->and($balance->status)->toBe(402)
         ->and($balance->message)->toBe('Insufficient balance to complete this request')
-        ->and($balance->description)->toBe('The account balance cannot cover the requested operation.')
         ->and($balance->hasDetails)->toBeTrue();
-
-    expect($builder->getErrorCodeSchemaName())->toBe('ErrorCode');
 });
 
-it('inherits #[HttpStatus] from a parent class', function () {
-    $builder = makeErrorBuilder();
-    $builder->buildAll();
+it('resolves STATUS from an int, an int-backed enum, and abstract or concrete parents', function () {
+    $defs = definitionsByCode(makeErrorBuilder());
 
-    $unauth = collect($builder->getErrorDefinitions())->firstWhere('code', 'unauthenticated');
-
-    expect($unauth->status)->toBe(401)
-        ->and($unauth->hasDetails)->toBeFalse();
+    expect($defs['insufficient_balance']->status)->toBe(402)   // int
+        ->and($defs['validation_failed']->status)->toBe(422)   // int-backed enum case
+        ->and($defs['unauthenticated']->status)->toBe(401)     // inherited from an abstract parent
+        ->and($defs['not_found']->status)->toBe(404)
+        ->and($defs['project_not_found']->status)->toBe(404);  // inherited from a concrete parent
 });
+
+it('discovers no errors when errors.base_class is not configured', function () {
+    $builder = makeErrorBuilder(['base_class' => null]);
+    $names = array_keys(schemasByName($builder));
+
+    expect($builder->getErrorDefinitions())->toBe([])
+        ->and($names)->not->toContain('InsufficientBalanceErrorBody');
+});
+
+it('accepts a list of base classes', function () {
+    expect(definitionsByCode(makeErrorBuilder(['base_class' => [ApiError::class]])))->toHaveCount(5);
+});
+
+it('rejects a base class that does not exist or is not a Data class', function (string $baseClass, string $message) {
+    expect(fn () => makeErrorBuilder(['base_class' => $baseClass]))->toThrow(OpenApiDocsException::class, $message);
+})->with([
+    'missing class' => ['App\\Nope\\ApiError', 'errors.base_class App\\Nope\\ApiError does not exist'],
+    'not a Data class' => [stdClass::class, 'errors.base_class stdClass must extend Spatie\\LaravelData\\Data'],
+]);
+
+it('enforces the error class contract before anything is written', function (string $declaration, string $message) {
+    $dir = errorClassDir($declaration);
+
+    try {
+        expect(fn () => makeErrorBuilder([], $dir)->buildAll())->toThrow(OpenApiDocsException::class, $message);
+    } finally {
+        removeErrorClassDir($dir);
+    }
+})->with([
+    'CODE missing' => [
+        'class NoCodeError extends ApiError
+{
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+}',
+        'NoCodeError must declare const CODE',
+    ],
+    'CODE inherited' => [
+        'class InheritsCodeError extends NotFoundError
+{
+    public const MESSAGE = "A more specific not found";
+}',
+        'InheritsCodeError inherits CODE from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
+    ],
+    'MESSAGE inherited' => [
+        'class InheritsMessageError extends NotFoundError
+{
+    public const CODE = "specific_not_found";
+}',
+        'InheritsMessageError inherits MESSAGE from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
+    ],
+    'CODE empty' => [
+        'class EmptyCodeError extends ApiError
+{
+    public const CODE = "";
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+}',
+        'EmptyCodeError::CODE must be a non-empty string',
+    ],
+    'STATUS missing' => [
+        'class NoStatusError extends ApiError
+{
+    public const CODE = "no_status";
+    public const MESSAGE = "m";
+}',
+        'NoStatusError has no STATUS constant',
+    ],
+    'STATUS not an HTTP status' => [
+        'class BadStatusError extends ApiError
+{
+    public const CODE = "bad_status";
+    public const MESSAGE = "m";
+    public const STATUS = 42;
+}',
+        'BadStatusError::STATUS must be an HTTP status code',
+    ],
+    'class-level Description' => [
+        '#[Description("Said twice")]
+class DescribedError extends ApiError
+{
+    public const CODE = "described";
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+}',
+        'DescribedError has a class-level #[Description]',
+    ],
+    'envelope field reusing an error-object name' => [
+        'class CollidingError extends ApiError
+{
+    public const CODE = "colliding";
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+
+    public function __construct(
+        #[EnvelopeField]
+        public string $code,
+    ) {}
+}',
+        'CollidingError marks `code` as #[EnvelopeField]',
+    ],
+]);
+
+it('rejects two error classes declaring the same CODE', function () {
+    $dir = errorClassDir('class DuplicateCodeError extends ApiError
+{
+    public const CODE = "not_found";
+    public const MESSAGE = "Also not found";
+    public const STATUS = 404;
+}');
+
+    try {
+        expect(fn () => makeErrorBuilder([], [$dir, errorFixturesDir()])->buildAll())
+            ->toThrow(OpenApiDocsException::class, "Duplicate error code 'not_found'");
+    } finally {
+        removeErrorClassDir($dir);
+    }
+});
+
+// -----------------------------------------------------------------------------
+// Schemas
+// -----------------------------------------------------------------------------
 
 it('builds the details schema from non-envelope properties', function () {
     $schemas = schemasByName(makeErrorBuilder());
@@ -76,9 +256,10 @@ it('builds the details schema from non-envelope properties', function () {
     expect(array_keys($props))->toBe(['required', 'available'])
         ->and($props['required']['type'])->toBe('integer');
 
-    // ValidationError's only property is an envelope field, so no details schema.
+    // No non-envelope properties, so no details schema.
     expect($schemas)->not->toHaveKey('ValidationError')
-        ->and($schemas)->not->toHaveKey('UnauthenticatedError');
+        ->and($schemas)->not->toHaveKey('UnauthenticatedError')
+        ->and($schemas)->not->toHaveKey('NotFoundError');
 });
 
 it('builds the {Name}Response envelope around the error object', function () {
@@ -94,7 +275,7 @@ it('builds the {Name}Response envelope around the error object', function () {
     expect($props['error']['allOf'][0]['$ref'])->toBe('#/components/schemas/InsufficientBalanceErrorBody');
 });
 
-it('builds the {Name}Body error object with message, code and details', function () {
+it('builds the {Name}Body error object with MESSAGE as the message example', function () {
     $schemas = schemasByName(makeErrorBuilder());
     $body = $schemas['InsufficientBalanceErrorBody'];
     $props = propsOf($body);
@@ -126,23 +307,35 @@ it('omits details when the class has no non-envelope properties and lifts #[Enve
         ->and(array_keys(propsOf($schemas['UnauthenticatedErrorBody'])))->toBe(['message', 'code']);
 });
 
-it('builds the shared ErrorCode enum listing every code with its status and description', function () {
-    $schemas = schemasByName(makeErrorBuilder());
-    $enum = $schemas['ErrorCode'];
+it('builds the ErrorCode enum only for the errors it is given, documented by MESSAGE', function () {
+    $builder = makeErrorBuilder();
+    $defs = definitionsByCode($builder);
+    $enum = jsonOf($builder->buildErrorCodeSchema(array_values($defs)));
 
     expect($enum['type'])->toBe('string')
-        ->and($enum['enum'])->toBe(['insufficient_balance', 'unauthenticated', 'validation_failed'])
+        ->and($enum['enum'])->toBe(['insufficient_balance', 'not_found', 'project_not_found', 'unauthenticated', 'validation_failed'])
         ->and($enum['description'])->toContain('returned in `error.code`')
-        ->and($enum['description'])->toContain('`insufficient_balance` (HTTP 402): The account balance cannot cover the requested operation.')
-        ->and($enum['description'])->toContain('`unauthenticated` (HTTP 401): Unauthenticated');
+        ->and($enum['description'])->toContain('`insufficient_balance` (HTTP 402): Insufficient balance to complete this request')
+        ->and($enum['description'])->toContain('`project_not_found` (HTTP 404): No project with that id');
+
+    expect(jsonOf($builder->buildErrorCodeSchema([$defs['not_found']]))['enum'])->toBe(['not_found'])
+        ->and($builder->buildErrorCodeSchema([]))->toBeNull();
+
+    // buildAll() never emits it: the generator adds it once it knows which errors are referenced.
+    expect(array_keys(schemasByName(makeErrorBuilder())))->not->toContain('ErrorCode');
 });
 
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
+
 it('honours response- and error-level field renames, omissions and the code schema name from config', function () {
-    $schemas = schemasByName(makeErrorBuilder([
+    $builder = makeErrorBuilder([
         'code_schema' => 'ApiErrorCode',
         'response_fields' => ['status' => 'ok', 'data' => null, 'error' => 'failure'],
         'error_fields' => ['message' => 'text', 'code' => 'reason', 'details' => 'meta'],
-    ]));
+    ]);
+    $schemas = schemasByName($builder);
 
     $response = $schemas['InsufficientBalanceErrorResponse'];
     $body = $schemas['InsufficientBalanceErrorBody'];
@@ -150,10 +343,13 @@ it('honours response- and error-level field renames, omissions and the code sche
     expect(array_keys(propsOf($response)))->toBe(['ok', 'failure'])
         ->and($response['required'])->toBe(['ok', 'failure'])
         ->and(array_keys(propsOf($body)))->toBe(['text', 'reason', 'meta'])
-        ->and($body['required'])->toBe(['text', 'reason'])
-        ->and($schemas)->toHaveKey('ApiErrorCode')
-        ->and($schemas)->not->toHaveKey('ErrorCode')
-        ->and($schemas['ApiErrorCode']['description'])->toContain('returned in `failure.reason`');
+        ->and($body['required'])->toBe(['text', 'reason']);
+
+    $enum = $builder->buildErrorCodeSchema($builder->getErrorDefinitions());
+
+    expect($builder->getErrorCodeSchemaName())->toBe('ApiErrorCode')
+        ->and($enum->schema)->toBe('ApiErrorCode')
+        ->and(jsonOf($enum)['description'])->toContain('returned in `failure.reason`');
 });
 
 it('omits message from the error object when its name is null', function () {
@@ -181,60 +377,9 @@ it('rejects unknown and duplicate field names so a typo cannot silently fall bac
     'duplicate name' => [['response_fields' => ['status' => 'error']], 'errors.response_fields uses the name `error` more than once'],
 ]);
 
-it('rejects an #[EnvelopeField] property that reuses an error-object field name', function () {
-    $dir = sys_get_temp_dir() . '/openapi-collide-' . uniqid();
-    mkdir($dir);
-    file_put_contents($dir . '/CollidingError.php', <<<'PHP'
-<?php
-namespace ErrorCollisionFixture;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\EnvelopeField;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
-use Spatie\LaravelData\Data;
-#[ErrorCode('colliding')]
-#[HttpStatus(400)]
-class CollidingError extends Data
-{
-    public function __construct(
-        #[EnvelopeField]
-        public string $code,
-    ) {}
-}
-PHP);
-    require_once $dir . '/CollidingError.php';
-
-    try {
-        expect(fn () => makeErrorBuilder([], $dir)->buildAll())
-            ->toThrow(OpenApiDocsException::class, 'CollidingError marks `code` as #[EnvelopeField]');
-    } finally {
-        array_map('unlink', glob($dir . '/*'));
-        rmdir($dir);
-    }
-});
-
 it('scans extra errors.paths in addition to the DTO paths', function () {
-    $builder = new DtoSchemaBuilder(
-        dirname(__DIR__) . '/Data',
-        new ExampleGenerator([], []),
-        [],
-        ['paths' => [errorFixturesDir()]],
-    );
-    $names = array_map(fn ($s) => $s->schema, $builder->buildAll());
+    $names = array_keys(schemasByName(makeErrorBuilder(['paths' => [errorFixturesDir()]], dirname(__DIR__) . '/Data')));
 
     expect($names)->toContain('InsufficientBalanceErrorResponse')
-        ->and($names)->toContain('ErrorCode')
         ->and($names)->toContain('ExampleData'); // a regular DTO from tests/Data still builds
 });
-
-it('returns no error definitions or code schema when there are no error classes', function () {
-    $builder = makeErrorBuilder([], dirname(__DIR__) . '/Data');
-    $names = array_map(fn ($s) => $s->schema, $builder->buildAll());
-
-    expect($builder->getErrorDefinitions())->toBe([])
-        ->and($builder->getErrorCodeSchemaName())->toBeNull()
-        ->and($names)->not->toContain('ErrorCode');
-});
-
-it('fails with a clear message when an error class lacks #[HttpStatus]', function () {
-    makeErrorBuilder([], dirname(__DIR__) . '/ErrorFixturesInvalid')->buildAll();
-})->throws(OpenApiDocsException::class, 'MissingStatusError carries #[ErrorCode(\'missing_status\')] but no #[HttpStatus]');

@@ -12,13 +12,11 @@ use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Filters\MiddlewareFilter;
-use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Throws;
 use Langsys\OpenApiDocsGenerator\Support\OperationAction;
 use OpenApi\Annotations as OA;
 use OpenApi\Generator;
 use Psr\Log\LoggerInterface;
-use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionUnionType;
@@ -73,6 +71,9 @@ class OperationErrorAttacher
     /** Set per attach() pass: the shape the referenced error schemas were built with. */
     private ErrorEnvelope $envelope;
 
+    /** Set per attach() pass: the contract, for precise messages about undocumented classes. */
+    private ?ErrorContract $contract = null;
+
     /**
      * @param  RouteResolver|null  $routeResolver  Needed for middleware and not-found rules;
      *                                             without it only `#[Throws]` and the
@@ -114,12 +115,16 @@ class OperationErrorAttacher
      * @param  ErrorEnvelope|null  $envelope  The shape those errors' schemas were built with;
      *         shared-status responses are built from it so they reference them correctly.
      *         Defaults to the default envelope.
+     * @param  ErrorContract|null  $contract  The contract those errors were discovered with;
+     *         lets a failure say whether a declared class is not an error class or was
+     *         never scanned. Without it the message covers both.
      * @return int  Number of responses added.
      * @throws OpenApiDocsException when a declared error class isn't a documented error.
      */
-    public function attach(OA\OpenApi $openapi, array $errorDefinitions, ?ErrorEnvelope $envelope = null): int
+    public function attach(OA\OpenApi $openapi, array $errorDefinitions, ?ErrorEnvelope $envelope = null, ?ErrorContract $contract = null): int
     {
         $this->envelope = $envelope ?? new ErrorEnvelope();
+        $this->contract = $contract;
         $this->definitions = [];
         foreach ($errorDefinitions as $definition) {
             $this->definitions[$definition->className] = $definition;
@@ -390,16 +395,29 @@ class OperationErrorAttacher
             ));
         }
 
-        if ((new ReflectionClass($class))->getAttributes(ErrorCode::class) === []) {
+        if ($this->contract === null) {
             throw new OpenApiDocsException(sprintf(
-                'Error class %s declared for %s carries no #[ErrorCode]; add one (with #[HttpStatus]) or remove it from #[Throws]/implied_errors.',
+                '%s declared for %s is not a documented error class: it must be a concrete subclass of errors.base_class inside a scanned directory (errors.paths).',
                 $class,
                 $location,
             ));
         }
 
+        if (! $this->contract->isErrorClass($class)) {
+            $baseClasses = $this->contract->baseClasses();
+
+            throw new OpenApiDocsException(sprintf(
+                '%s declared for %s is not an error class: %s',
+                $class,
+                $location,
+                $baseClasses === []
+                    ? 'no errors.base_class is configured.'
+                    : 'it must be a concrete subclass of errors.base_class (' . implode(', ', $baseClasses) . ').',
+            ));
+        }
+
         throw new OpenApiDocsException(sprintf(
-            'Error class %s declared for %s carries #[ErrorCode] but was never scanned; add its directory to the documentation set\'s errors.paths.',
+            'Error class %s declared for %s was never scanned; add its directory to the documentation set\'s errors.paths.',
             $class,
             $location,
         ));
@@ -449,7 +467,7 @@ class OperationErrorAttacher
             $lines[] = sprintf(
                 '- `%s`: %s',
                 $definition->code,
-                $definition->description ?? $definition->message ?? $definition->schemaName,
+                $definition->message,
             );
         }
 

@@ -8,6 +8,7 @@ use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OpenApiGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OperationErrorAttacher;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError;
 use Psr\Log\NullLogger;
@@ -44,7 +45,7 @@ function attachmentResolver(array $middleware): RouteResolver
     };
 }
 
-function generateWithErrors(string $docsFile, string $yamlFile, array $impliedErrors = [], bool $withRoutes = true): array
+function generateWithErrors(string $docsFile, string $yamlFile, array $impliedErrors = [], bool $withRoutes = true, bool $prune = true): array
 {
     $operationsDir = dirname(__DIR__, 2) . '/tests/ErrorOperationFixtures';
     $errorsDir = dirname(__DIR__, 2) . '/tests/ErrorFixtures';
@@ -64,9 +65,10 @@ function generateWithErrors(string $docsFile, string $yamlFile, array $impliedEr
             $operationsDir,
             new ExampleGenerator([], []),
             [],
-            ['paths' => [$errorsDir]],
+            ['base_class' => ApiError::class, 'paths' => [$errorsDir]],
         ),
         logger: new NullLogger(),
+        pruneComponents: $prune,
         validateRefs: 'strict',
         errorAttacher: new OperationErrorAttacher(
             routeResolver: $withRoutes ? attachmentResolver([ATTACH_MW]) : null,
@@ -132,6 +134,9 @@ test('pruning keeps exactly the schemas the attached responses reach', function 
         // Nothing references the 401 error at all.
         ->and($schemas)->not->toHaveKey('UnauthenticatedErrorBody')
         ->and($doc['components']['responses'])->not->toHaveKey('UnauthenticatedError');
+
+    // The code list is exactly the referenced errors.
+    expect($schemas['ErrorCode']['enum'])->toBe(['batch_too_large', 'insufficient_balance', 'validation_failed']);
 });
 
 test('middleware-implied errors are attached to every route carrying the middleware', function () {
@@ -172,4 +177,34 @@ test('without a route resolver only declared errors are attached', function () {
 
     expect($doc['paths']['/api/purchase']['post']['responses'])->toHaveKey('402')
         ->and($doc['paths']['/api/purchase']['post']['responses'])->not->toHaveKey('401');
+});
+
+test('with pruning off, error documentation is still scoped to what the document references', function () {
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile, prune: false);
+    $schemas = $doc['components']['schemas'];
+    $responses = $doc['components']['responses'];
+
+    // Pruning is off, so ordinary DTO schemas nobody references are kept.
+    expect($schemas)->toHaveKeys(['StoreProjectRequest', 'NotAnError']);
+
+    // Errors no operation or kept schema reaches are internal: not published.
+    foreach (['UnauthenticatedError', 'ProjectNotFoundError'] as $internal) {
+        expect($responses)->not->toHaveKey($internal)
+            ->and($schemas)->not->toHaveKey($internal . 'Body')
+            ->and($schemas)->not->toHaveKey($internal . 'Response');
+    }
+
+    expect($schemas['ErrorCode']['enum'])->toBe(['batch_too_large', 'insufficient_balance', 'not_found', 'validation_failed']);
+});
+
+test('with pruning off, a kept schema keeps the error it references, so no $ref dangles', function () {
+    // NotFoundExample is unreferenced by any operation but kept because pruning is off.
+    // It points at NotFoundErrorBody, so that body must survive: validate_refs strict
+    // would otherwise abort generation.
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile, prune: false);
+    $schemas = $doc['components']['schemas'];
+
+    expect($schemas)->toHaveKeys(['NotFoundExample', 'NotFoundErrorBody'])
+        ->and($schemas['NotFoundExample']['properties']['error']['$ref'])->toBe('#/components/schemas/NotFoundErrorBody')
+        ->and($schemas['ErrorCode']['enum'])->toContain('not_found');
 });
