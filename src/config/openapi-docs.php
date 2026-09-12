@@ -159,6 +159,36 @@ return [
             ],
         ],
 
+        // --- Implied Errors ---
+        // Attach error responses to operations without hand-typing them. An
+        // operation's errors are the union of its #[Throws(...)] classes and the
+        // rules below, deduplicated by class. A status owned by one error becomes
+        // a $ref to its reusable response; a status shared by several becomes a
+        // oneOf discriminated on `code`. A response you wrote yourself for that
+        // status always wins.
+        'implied_errors' => [
+            // Middleware alias or FQCN => the errors any route carrying it can
+            // return. Matched against the route's fully-resolved middleware, so
+            // it works however the middleware was attached.
+            // e.g. 'auth:sanctum' => [\App\Http\Errors\UnauthenticatedError::class],
+            'middleware' => [],
+
+            // Error implied when the action takes a Spatie Data parameter
+            // (i.e. the request is validated by Laravel Data).
+            // e.g. \App\Http\Errors\ValidationFailedError::class
+            'validation' => null,
+
+            // Error implied when the route has a bound {param}.
+            // e.g. \App\Http\Errors\NotFoundError::class
+            'not_found' => null,
+
+            // Which parameters count as "bound" for the rule above:
+            //   'model' (default) — only params bound to an Eloquent model, either
+            //                       implicitly by the action's signature or by Route::bind()
+            //   'any'             — any {param} in the route URI
+            'not_found_binding' => 'model',
+        ],
+
         // --- Output Paths ---
         'paths' => [
             'docs' => storage_path('api-docs'),

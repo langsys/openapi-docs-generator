@@ -24,6 +24,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [Laravel Data v3 (Legacy)](#laravel-data-v3-legacy)
 - [Auto-Generated Response Schemas](#auto-generated-response-schemas)
 - [API Errors](#api-errors)
+  - [Attaching Errors to Operations](#attaching-errors-to-operations)
 - [Example Generation (Faker)](#example-generation-faker)
 - [Artisan Commands](#artisan-commands)
 - [Configuration Reference](#configuration-reference)
@@ -619,6 +620,56 @@ The envelope is configurable per documentation set under `errors` so each app ca
     ],
 ],
 ```
+
+### Attaching Errors to Operations
+
+Rather than repeating the same 401/422/404 response blocks on every action, declare what an action can return and let the generator attach the responses.
+
+`#[Throws]` on the action is the explicit list. On a controller class it applies to every action of that controller:
+
+```php
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Throws;
+
+class ProjectController
+{
+    #[OA\Post(path: '/api/projects/{project}/purchase', responses: [...])]
+    #[Throws(InsufficientBalanceError::class, ValidationError::class)]
+    public function purchase(Project $project, PurchaseRequest $request) { … }
+}
+```
+
+Errors can also be implied, so they never have to be repeated at all. Configure `implied_errors` per documentation set:
+
+```php
+'implied_errors' => [
+    // Middleware alias or FQCN => errors any route carrying it can return.
+    'middleware' => [
+        'auth:sanctum' => [UnauthenticatedError::class],
+        'deduct.request' => [InsufficientBalanceError::class],
+    ],
+
+    // Action takes a Spatie Data parameter => this error.
+    'validation' => ValidationFailedError::class,
+
+    // Route has a bound {param} => this error.
+    'not_found' => NotFoundError::class,
+
+    // 'model' (default): only params bound to an Eloquent model, implicitly by the
+    // action's signature or by Route::bind(). 'any': any {param} in the route URI.
+    'not_found_binding' => 'model',
+],
+```
+
+Middleware is matched against the route's fully-resolved middleware — the same ground truth [filtered sets](#filtered-documentation-sets) use — so it works however the middleware was attached (directly, by group, by alias, or by class).
+
+An operation's errors are the union of all sources, deduplicated by class, then grouped by HTTP status:
+
+| Errors for the status | Emitted response |
+|---|---|
+| One | `$ref` to `#/components/responses/{Name}` |
+| Several | Inline response whose schema is a `oneOf` of their `{Name}Response` envelopes, with `discriminator: { propertyName: code, mapping: { … } }` |
+
+A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]` or `implied_errors` names a class that is not a documented error (no `#[ErrorCode]`, or never scanned — the message says which).
 
 ## Example Generation (Faker)
 

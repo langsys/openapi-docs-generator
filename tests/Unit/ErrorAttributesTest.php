@@ -104,3 +104,15 @@ it('rejects error attributes on the wrong target', function () {
 
     (new ReflectionProperty($bad, 'p'))->getAttributes(ErrorCode::class)[0]->newInstance();
 })->throws(Error::class);
+
+it('allows Throws on a controller class as well as a method', function () {
+    $controller = new #[Throws(InsufficientBalanceErrorFixture::class)] class {
+        public function anything(): void
+        {
+        }
+    };
+
+    $attr = (new ReflectionClass($controller))->getAttributes(Throws::class)[0]->newInstance();
+
+    expect($attr->errorClasses)->toBe([InsufficientBalanceErrorFixture::class]);
+});

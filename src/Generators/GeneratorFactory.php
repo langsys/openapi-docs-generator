@@ -31,6 +31,7 @@ class GeneratorFactory
 
         $filterConfig = $config['filter'] ?? [];
         $operationSelector = self::makeOperationSelector($filterConfig, $logger);
+        $errorAttacher = self::makeErrorAttacher($config, $filterConfig, $logger);
 
         $securityOverride = $config['security_override'] ?? null;
         // Clean docs by default: prune components/tags no operation references.
@@ -65,6 +66,34 @@ class GeneratorFactory
             pruneComponents: $pruneComponents,
             validateRefs: $validateRefs,
             infoOverride: $config['info'] ?? null,
+            errorAttacher: $errorAttacher,
+        );
+    }
+
+    /**
+     * Build the error attacher for a documentation set.
+     *
+     * Always built (it is inert without `#[Throws]` attributes or `implied_errors`
+     * config), and given a route resolver whenever a router is available, since the
+     * middleware and not-found rules are keyed off the backing route.
+     *
+     * @param  array<string, mixed>  $config
+     * @param  array<string, mixed>  $filterConfig
+     */
+    private static function makeErrorAttacher(array $config, array $filterConfig, ?LoggerInterface $logger): OperationErrorAttacher
+    {
+        $router = app()->bound('router') ? app('router') : null;
+        $aliasMap = ($router !== null && method_exists($router, 'getMiddleware')) ? $router->getMiddleware() : [];
+
+        return new OperationErrorAttacher(
+            routeResolver: $router === null ? null : new LaravelRouteResolver(
+                router: $router,
+                basePrefix: $filterConfig['route_prefix'] ?? null,
+            ),
+            impliedErrors: $config['implied_errors'] ?? [],
+            aliasMap: $aliasMap,
+            router: $router,
+            logger: $logger,
         );
     }
 

@@ -7,8 +7,8 @@ use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
 use Langsys\OpenApiDocsGenerator\Data\OperationContext;
 use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\SelectionReport;
+use Langsys\OpenApiDocsGenerator\Support\OperationAction;
 use OpenApi\Annotations as OA;
-use OpenApi\Context;
 use OpenApi\Generator;
 use Psr\Log\LoggerInterface;
 
@@ -158,23 +158,7 @@ class OperationSelector
      */
     private function actionFor(OA\Operation $operation): ?string
     {
-        $context = $operation->_context ?? null;
-
-        if (! $context instanceof Context) {
-            return null;
-        }
-
-        $class = $context->class;
-        $method = $context->method;
-        $namespace = $context->namespace;
-
-        if (! is_string($class) || $class === '' || ! is_string($method) || $method === '') {
-            return null;
-        }
-
-        $fqcn = (is_string($namespace) && $namespace !== '') ? $namespace . '\\' . $class : $class;
-
-        return ltrim($fqcn, '\\') . '@' . $method;
+        return OperationAction::fromOperation($operation);
     }
 
     private function hasOperations(OA\PathItem $pathItem): bool

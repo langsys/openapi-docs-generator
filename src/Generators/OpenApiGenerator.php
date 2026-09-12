@@ -55,6 +55,7 @@ class OpenApiGenerator
         private bool $pruneComponents = true,
         private string $validateRefs = 'off',
         private ?array $infoOverride = null,
+        private ?OperationErrorAttacher $errorAttacher = null,
     ) {}
 
     /**
@@ -89,6 +90,7 @@ class OpenApiGenerator
         $this->selectOperations();
         $this->applySecurityOverride();
         $this->buildAndMergeDtoSchemas();
+        $this->attachOperationErrors();
         $this->enrichEndpointParameters();
         $this->pruneComponentsAndTags();
         $this->populateServers();
@@ -352,6 +354,19 @@ class OpenApiGenerator
         }
 
         $this->mergeErrorResponses();
+    }
+
+    /**
+     * Attach declared (`#[Throws]`) and implied error responses to operations.
+     *
+     * Runs after the error schemas and reusable responses exist and before
+     * pruning, so the refs it adds are part of the closure the pruner keeps.
+     *
+     * @throws OpenApiDocsException when a declared error class isn't a documented error.
+     */
+    private function attachOperationErrors(): void
+    {
+        $this->errorAttacher?->attach($this->openApi, $this->dtoSchemaBuilder->getErrorDefinitions());
     }
 
     /**

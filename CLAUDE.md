@@ -41,22 +41,25 @@ There are no composer scripts defined — use `./vendor/bin/pest` directly.
 4. `selectOperations()` — (Filtered sets only) Resolve each operation's route and keep only those matching the set's `OperationFilter`s; returns a `SelectionReport`
 5. `applySecurityOverride()` — (Filtered sets only) Force the configured `security_override` onto every surviving operation
 6. `buildAndMergeDtoSchemas()` — Build DTO schemas via `DtoSchemaBuilder` and merge into OpenAPI model (annotation-defined schemas take precedence). Also merges `components.responses.{Name}` for every discovered error DTO (annotation-defined responses take precedence)
-7. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
-8. `pruneComponentsAndTags()` — Remove components/tags outside the transitive `$ref` closure of the surviving operations. On by default so no document ships unused schemas; opt out per non-filtered set with `prune_unused_components => false` (filtered sets always prune). The error-code enum schema (`errors.code_schema`) is seeded as an extra root so the error-codes reference page survives
-9. `populateServers()` — Add server entries from config
-10. `applyInfoOverride()` — (Per-set `info`) Deep-merge a documentation set's `info` fields (title/description/version/contact/license) over the scanned `@OA\Info`; unspecified fields fall back to the annotation
-11. `validateReferences()` — (Opt-in `validate_refs`) Detect referenced-but-undefined `$ref`s; `warn` records them (console), `strict` throws before writing so a broken spec is never saved
-12. `saveJson()` — Save OpenAPI model as JSON
-13. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
-14. `makeYamlCopy()` — Optionally convert JSON to YAML
+7. `attachOperationErrors()` — (When errors exist) Attach declared (`#[Throws]`) and implied (`implied_errors`) error responses to each operation: one `$ref` per status, `oneOf` + `code` discriminator when a status is shared, hand-written responses win. Runs before pruning so the refs it adds are in the closure
+8. `enrichEndpointParameters()` — Replace generic `$ref` parameters with endpoint-specific inline parameters
+9. `pruneComponentsAndTags()` — Remove components/tags outside the transitive `$ref` closure of the surviving operations. On by default so no document ships unused schemas; opt out per non-filtered set with `prune_unused_components => false` (filtered sets always prune). The error-code enum schema (`errors.code_schema`) is seeded as an extra root so the error-codes reference page survives
+10. `populateServers()` — Add server entries from config
+11. `applyInfoOverride()` — (Per-set `info`) Deep-merge a documentation set's `info` fields (title/description/version/contact/license) over the scanned `@OA\Info`; unspecified fields fall back to the annotation
+12. `validateReferences()` — (Opt-in `validate_refs`) Detect referenced-but-undefined `$ref`s; `warn` records them (console), `strict` throws before writing so a broken spec is never saved
+13. `saveJson()` — Save OpenAPI model as JSON
+14. `injectSecurity()` — Inject security definitions from config into JSON (restricted to the override's schemes when `security_override` is set)
+15. `makeYamlCopy()` — Optionally convert JSON to YAML
 
 Note: `generate()` returns the fully-assembled `OA\OpenApi` tree, so every step after step 3 mutates that in-memory model. Filtering is therefore post-scan (the discriminator, route middleware, is not present in the scanned annotations). Clean output is guaranteed by the prune step, not by a reference-driven build: `buildAndMergeDtoSchemas()` builds all DTOs, then `pruneComponentsAndTags()` removes everything outside the reference closure. This build-all-then-prune order is deliberate — it can never emit a dangling `$ref` (pruning only removes unreachable components), whereas a reference-driven "build only the closure" would risk under-building. A lazy closure build is a possible future perf optimization, but only with an added `$ref`-resolution validation pass; it is not needed for correctness.
 
 ### Key Classes (under `Langsys\OpenApiDocsGenerator`)
 
-- **Generators\OpenApiGenerator** — Main orchestrator. Runs the 9-step pipeline.
+- **Generators\OpenApiGenerator** — Main orchestrator. Runs the pipeline above.
 - **Generators\GeneratorFactory** — Factory that wires all dependencies from config and returns an `OpenApiGenerator`.
 - **Generators\DtoSchemaBuilder** — Core class. Scans a directory for Spatie `Data` subclasses, reflects on their properties, and builds `OA\Schema` objects directly in memory. Handles enums (including nullable enums), nested objects, collections, grouped collections, arrays, DateTime/Carbon (as `string` with `date-time` format), and primitives. Strips `Spatie\LaravelData\Optional` from union types and marks those properties as not required. Auto-generates Response/PaginatedResponse/ListResponse wrappers for Resource DTOs. **API errors**: any Data class with a class-level `#[ErrorCode]` is an error (discovery by attribute presence, not name/base class) — builds the `{Name}` details schema (non-`#[EnvelopeField]` props), the `{Name}Response` envelope (field names from the `errors.fields` config, `null` omits a field; `#[EnvelopeField]` props lifted to top level; `data` is `array` + `maxItems: 0`; `error` uses the message as `example`, never `default`), and one `errors.code_schema` (default `ErrorCode`) string enum listing every code. `#[HttpStatus]`/`#[Description]` are looked up on the class then its parents. Throws `OpenApiDocsException` on a missing `#[HttpStatus]` or a duplicate code. Exposes `getErrorDefinitions()` (`Data\ErrorDefinition[]`) and `getErrorCodeSchemaName()`. `@var array<string, T>` docblocks on `array` props become `object` + `additionalProperties`.
+- **Generators\OperationErrorAttacher** — Attaches error responses to operations. Sources, unioned and deduped by class: `#[Throws]` on the action (or its controller class), `implied_errors.middleware` (matched via `MiddlewareFilter` against the route's fully-resolved middleware), and two structural rules (`implied_errors.validation` when the action takes a Spatie `Data` parameter; `implied_errors.not_found` when the route has a bound `{param}` — `not_found_binding` 'model' (default, implicit model binding or `Route::bind()`) or 'any'). Grouped by status: one error → `$ref` to `components.responses.{Name}`; several → inline `oneOf` of their envelopes + `discriminator` on `code`. Hand-written responses for a status win. Throws `OpenApiDocsException` when a declared class has no `#[ErrorCode]` or was never scanned. Inert without `#[Throws]`/`implied_errors`; without a `RouteResolver` only `#[Throws]` and the validation rule apply.
+- **Support\OperationAction** — Derives `"FQCN@method"` from an operation's swagger-php `_context` and reflects it. Shared by `OperationSelector` (route resolution) and `OperationErrorAttacher` (`#[Throws]` lookup).
 - **Generators\ExampleGenerator** — Produces example values using Faker, with configurable attribute mapping (property name patterns → Faker methods) and custom function overrides.
 - **Generators\ConfigFactory** — Deep-merges `defaults` config with per-documentation overrides.
 - **Generators\SecurityDefinitions** — Post-generation injection of security schemes from config into the JSON file.
@@ -89,7 +92,7 @@ Custom attributes applied to Data class properties to control schema output:
 - `#[ErrorCode(code, ?message)]` — Class-level. Marks a Data class as an API error (discovery rule) with its `code` slug and default `error` message.
 - `#[HttpStatus(int)]` — Class-level (inheritable from a parent). HTTP status of an error.
 - `#[EnvelopeField]` — Property-level on an error DTO: emit at envelope top level instead of under `details`.
-- `#[Throws(...classes)]` — Method-level on controller actions: the errors an action can return (consumed by L2 operation attachment).
+- `#[Throws(...classes)]` — Method-level on controller actions, or class-level to cover every action of a controller: the errors it can return.
 - `#[Description]` also accepts class-level placement (used for error responses and the `ErrorCode` reference).
 
 ### Endpoint Parameter Enrichment
@@ -106,7 +109,7 @@ Custom attributes applied to Data class properties to control schema output:
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (209 tests, 575 assertions).
+Tests use Pest with Orchestra Testbench (232 tests, 627 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -126,6 +129,8 @@ Tests use Pest with Orchestra Testbench (209 tests, 575 assertions).
 | `tests/Unit/ErrorAttributesTest.php` | Error attribute targets, readonly props, `Throws` variadic list, class-level `Description` |
 | `tests/Unit/ErrorSchemaBuilderTest.php` | Error discovery, inherited `HttpStatus`, details/envelope/`ErrorCode` shapes, envelope config, `errors.paths`, missing-status failure |
 | `tests/Integration/ErrorResponsesTest.php` | `components.responses.{Name}` + `x-http-status`, hand-written `ref` to an error response resolves under strict validation, `ErrorCode` survives pruning, prune-off emits all |
+| `tests/Unit/OperationErrorAttacherTest.php` | `$ref` vs `oneOf`+discriminator, annotation precedence, middleware/validation/not-found rules, dedupe, class-level `Throws`, no-resolver and no-context cases, both failure messages |
+| `tests/Integration/OperationErrorAttachmentTest.php` | End-to-end attachment: single/shared status, hand-written precedence, pruning keeps attached refs, middleware + structural rules, no-resolver |
 | `tests/Unit/ReferenceValidatorTest.php` | Unresolved-`$ref` detection: resolved vs dangling, nested closure, discriminator mapping, external-ref skip, location formatting |
 | `tests/Integration/FullPipelineTest.php` | End-to-end: scan + DTO build + security + servers + JSON/YAML |
 | `tests/Integration/FilteredDocumentationSetTest.php` | End-to-end filtered set: keep/drop by middleware, orphan-schema prune, unmatched exclusion, security_override + scheme restriction |
@@ -134,7 +139,7 @@ Tests use Pest with Orchestra Testbench (209 tests, 575 assertions).
 | `tests/Integration/InfoOverrideTest.php` | Per-set `info` override — replaces title/description, unspecified fields fall back to `@OA\Info`, nested contact deep-merge |
 
 Test data classes live in `tests/Data/` (`TestData.php`, `ExampleData.php`, `ExampleEnum.php`, `TestDataV4.php`, `DateTimeTestData.php`, `OptionalUnionTestRequest.php`).
-Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`. `tests/ErrorFixtures/` holds error DTOs + a controller referencing one; `tests/ErrorFixturesInvalid/` holds an error class missing `#[HttpStatus]` (kept separate so it doesn't break the valid scan). `tests/DanglingFixtures/` holds a controller with a deliberately undefined `$ref` (kept out of `tests/Fixtures/` so it doesn't pollute other scan-based tests).
+Test fixtures (controller with OA attributes for scanning; `RoutingController.php` for route resolution) live in `tests/Fixtures/`. `tests/ErrorFixtures/` holds error DTOs + a controller referencing one; `tests/ErrorFixturesInvalid/` holds an error class missing `#[HttpStatus]` (kept separate so it doesn't break the valid scan); `tests/ErrorOperationFixtures/` holds the `#[Throws]` controllers, a second 422 error, a bound model and a Data request for the attachment tests (its error DTOs come from `tests/ErrorFixtures/` via `errors.paths`). `tests/DanglingFixtures/` holds a controller with a deliberately undefined `$ref` (kept out of `tests/Fixtures/` so it doesn't pollute other scan-based tests).
 
 ## Key Patterns
 
