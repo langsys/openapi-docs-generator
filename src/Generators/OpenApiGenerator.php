@@ -366,7 +366,11 @@ class OpenApiGenerator
      */
     private function attachOperationErrors(): void
     {
-        $this->errorAttacher?->attach($this->openApi, $this->dtoSchemaBuilder->getErrorDefinitions());
+        $this->errorAttacher?->attach(
+            $this->openApi,
+            $this->dtoSchemaBuilder->getErrorDefinitions(),
+            $this->dtoSchemaBuilder->getErrorEnvelope(),
+        );
     }
 
     /**

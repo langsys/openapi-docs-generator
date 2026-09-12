@@ -129,11 +129,13 @@ return [
 
         // --- API Errors ---
         // Any Data class carrying a class-level #[ErrorCode] (with #[HttpStatus]
-        // and optionally #[Description]) is an API error. For each one the
-        // generator emits the `{Name}` details schema, a `{Name}Response`
-        // envelope, a reusable `components.responses.{Name}` (with
-        // `x-http-status`), and a shared string-enum schema of every code that
-        // doubles as the error-codes reference page.
+        // and optionally #[Description]) is an API error. Its response is
+        //   { status: false, data: [], error: { message, code, details, ... } }
+        // and for each one the generator emits the `{Name}` details schema, the
+        // `{Name}Body` error object, the `{Name}Response` envelope, a reusable
+        // `components.responses.{Name}` (with `x-http-status`), and a shared
+        // string-enum schema of every code that doubles as the error-codes
+        // reference page.
         'errors' => [
             // Extra directories to scan for error classes. null = the same
             // directories as DTO discovery (`paths.annotations`).
@@ -142,18 +144,24 @@ return [
             // Name of the shared error-code enum schema.
             'code_schema' => 'ErrorCode',
 
-            // Envelope field names. Set a field to null to omit it from the envelope.
-            //   status  -> boolean, always false
-            //   data    -> array, always empty (maxItems: 0)
-            //   error   -> string, the #[ErrorCode] message as example
-            //   code    -> string enum of the single code
-            //   details -> $ref to the `{Name}` details schema (omitted when the
-            //              class has no non-#[EnvelopeField] properties)
-            // Properties marked #[EnvelopeField] are emitted at envelope top level.
-            'fields' => [
+            // Response-level field names. null omits a field; `error` cannot be null.
+            //   status -> boolean, always false
+            //   data   -> array, always empty (maxItems: 0)
+            //   error  -> the `{Name}Body` error object
+            'response_fields' => [
                 'status' => 'status',
                 'data' => 'data',
                 'error' => 'error',
+            ],
+
+            // Field names inside the error object. null omits a field; `code` cannot be null.
+            //   message -> string, the #[ErrorCode] message as example
+            //   code    -> string enum of the single code
+            //   details -> $ref to the `{Name}` details schema (omitted when the
+            //              class has no non-#[EnvelopeField] properties)
+            // Properties marked #[EnvelopeField] follow at the top level of the error object.
+            'error_fields' => [
+                'message' => 'message',
                 'code' => 'code',
                 'details' => 'details',
             ],

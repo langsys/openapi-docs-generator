@@ -47,23 +47,19 @@ class DtoSchemaBuilder
     private array $oneOfGroups = [];
 
     /**
-     * Default `errors` config: envelope field names (null = omit the field) and
-     * the name of the shared error-code enum schema.
+     * Default `errors` config other than the envelope field names, which
+     * ErrorEnvelope owns (`response_fields`, `error_fields`).
      */
     public const DEFAULT_ERROR_CONFIG = [
         'paths' => null,
         'code_schema' => 'ErrorCode',
-        'fields' => [
-            'status' => 'status',
-            'data' => 'data',
-            'error' => 'error',
-            'code' => 'code',
-            'details' => 'details',
-        ],
     ];
 
     /** @var array<string, mixed> Merged `errors` config (see DEFAULT_ERROR_CONFIG). */
     private array $errorConfig;
+
+    /** The error response shape; shared with OperationErrorAttacher via getErrorEnvelope(). */
+    private ErrorEnvelope $errorEnvelope;
 
     /** @var ErrorDefinition[] Populated by buildAll(), keyed by class name. */
     private array $errorDefinitions = [];
@@ -79,7 +75,8 @@ class DtoSchemaBuilder
         array $errorConfig = [],
     ) {
         $this->dtoPaths = (array) $dtoPaths;
-        $this->errorConfig = array_replace_recursive(self::DEFAULT_ERROR_CONFIG, $errorConfig);
+        $this->errorConfig = array_replace(self::DEFAULT_ERROR_CONFIG, $errorConfig);
+        $this->errorEnvelope = new ErrorEnvelope($errorConfig);
     }
 
     /**
@@ -99,6 +96,15 @@ class DtoSchemaBuilder
     public function getErrorCodeSchemaName(): ?string
     {
         return $this->errorDefinitions === [] ? null : (string) $this->errorConfig['code_schema'];
+    }
+
+    /**
+     * The error response shape this builder emits, so attached responses can be
+     * built from the same instance and always match the schemas they reference.
+     */
+    public function getErrorEnvelope(): ErrorEnvelope
+    {
+        return $this->errorEnvelope;
     }
 
     /**
@@ -1088,8 +1094,9 @@ class DtoSchemaBuilder
 
     /**
      * Build the schemas for one error class: the `{Name}` details schema (when the
-     * class has non-envelope properties) and the `{Name}Response` envelope.
-     * Records an ErrorDefinition for the generator (components.responses, L2).
+     * class has non-envelope properties), the `{Name}Body` error object and the
+     * `{Name}Response` envelope around it. Records an ErrorDefinition for the
+     * generator (components.responses) and the operation attacher.
      *
      * @return OA\Schema[]
      * @throws OpenApiDocsException on a duplicate code or a missing #[HttpStatus]
@@ -1129,6 +1136,7 @@ class DtoSchemaBuilder
             className: $className,
             schemaName: $schemaName,
             responseSchemaName: $schemaName . 'Response',
+            bodySchemaName: $schemaName . 'Body',
             code: $errorCode->code,
             message: $errorCode->message,
             status: $httpStatus->status,
@@ -1141,74 +1149,20 @@ class DtoSchemaBuilder
         if ($detailsSchema !== null) {
             $schemas[] = $detailsSchema;
         }
-        $schemas[] = $this->buildErrorResponseSchema($reflection, $definition);
+        $schemas[] = $this->buildErrorBodySchema($reflection, $definition);
+        $schemas[] = $this->errorEnvelope->responseSchema($definition);
 
         return $schemas;
     }
 
     /**
-     * Build the `{Name}Response` envelope for an error, with field names from
-     * `errors.fields` (a null name omits the field) plus any #[EnvelopeField]
-     * properties of the class at top level.
+     * Build the `{Name}Body` error object: the envelope's standard fields plus the
+     * class's #[EnvelopeField] properties (see ErrorEnvelope::bodySchema()).
      */
-    private function buildErrorResponseSchema(ReflectionClass $reflection, ErrorDefinition $definition): OA\Schema
+    private function buildErrorBodySchema(ReflectionClass $reflection, ErrorDefinition $definition): OA\Schema
     {
-        $fields = $this->errorConfig['fields'];
         $properties = [];
         $required = [];
-
-        if ($name = $fields['status'] ?? null) {
-            $properties[] = new OA\Property([
-                'property' => $name,
-                'type' => 'boolean',
-                'description' => 'Always false for errors',
-                'example' => false,
-            ]);
-            $required[] = $name;
-        }
-
-        if ($name = $fields['data'] ?? null) {
-            $properties[] = new OA\Property([
-                'property' => $name,
-                'type' => 'array',
-                'description' => 'Always empty on error',
-                'maxItems' => 0,
-                'items' => new OA\Items(['type' => 'object']),
-                'example' => [],
-            ]);
-        }
-
-        if ($name = $fields['error'] ?? null) {
-            $properties[] = new OA\Property([
-                'property' => $name,
-                'type' => 'string',
-                'description' => 'Human-readable error message',
-                'example' => $definition->message ?? $definition->description ?? $definition->code,
-            ]);
-            $required[] = $name;
-        }
-
-        if ($name = $fields['code'] ?? null) {
-            $properties[] = new OA\Property([
-                'property' => $name,
-                'type' => 'string',
-                'description' => 'Machine-readable error code',
-                'enum' => [$definition->code],
-                'example' => $definition->code,
-            ]);
-            $required[] = $name;
-        }
-
-        if ($definition->hasDetails && ($name = $fields['details'] ?? null)) {
-            $properties[] = new OA\Property([
-                'property' => $name,
-                'description' => 'Error details',
-                'type' => 'object',
-                'allOf' => [
-                    new OA\Schema(['ref' => '#/components/schemas/' . $definition->schemaName]),
-                ],
-            ]);
-        }
 
         foreach ($this->getClassProperties($reflection) as $prop) {
             $meta = $this->extractPropertyMetadata($prop);
@@ -1222,16 +1176,7 @@ class DtoSchemaBuilder
             }
         }
 
-        $schemaProps = [
-            'schema' => $definition->responseSchemaName,
-            'type' => 'object',
-            'properties' => $properties,
-        ];
-        if ($required !== []) {
-            $schemaProps['required'] = $required;
-        }
-
-        return new OA\Schema($schemaProps);
+        return $this->errorEnvelope->bodySchema($definition, $properties, $required);
     }
 
     /**
@@ -1261,9 +1206,9 @@ class DtoSchemaBuilder
         return new OA\Schema([
             'schema' => (string) $this->errorConfig['code_schema'],
             'type' => 'string',
-            'description' => "Machine-readable error codes returned in the `"
-                . ($this->errorConfig['fields']['code'] ?? 'code')
-                . "` field of error responses.\n\n" . implode("\n", $lines),
+            'description' => 'Machine-readable error codes returned in `'
+                . $this->errorEnvelope->codePath()
+                . "` of error responses.\n\n" . implode("\n", $lines),
             'enum' => array_map(static fn (ErrorDefinition $d): string => $d->code, $definitions),
             'example' => $definitions[0]->code,
         ]);

@@ -44,8 +44,8 @@ use Spatie\LaravelData\Data;
  *
  * The errors are then grouped by HTTP status. A status with one error becomes a
  * `$ref` to its reusable `components.responses.{Name}`; a status shared by several
- * becomes an inline response whose schema is a `oneOf` of their envelopes with
- * `code` as the discriminator. A response the author wrote for that status always
+ * becomes an inline response whose `error` property is a `oneOf` of their error
+ * bodies with `code` as the discriminator. A response the author wrote for that status always
  * wins — the same precedence rule DTO schemas follow.
  */
 class OperationErrorAttacher
@@ -69,6 +69,9 @@ class OperationErrorAttacher
 
     /** @var array<int, ImpliedErrorRule> */
     private array $rules;
+
+    /** Set per attach() pass: the shape the referenced error schemas were built with. */
+    private ErrorEnvelope $envelope;
 
     /**
      * @param  RouteResolver|null  $routeResolver  Needed for middleware and not-found rules;
@@ -108,11 +111,15 @@ class OperationErrorAttacher
      *
      * @param  array<int, ErrorDefinition>  $errorDefinitions  Errors discovered by the DTO
      *         builder, indexed here for the duration of this pass.
+     * @param  ErrorEnvelope|null  $envelope  The shape those errors' schemas were built with;
+     *         shared-status responses are built from it so they reference them correctly.
+     *         Defaults to the default envelope.
      * @return int  Number of responses added.
      * @throws OpenApiDocsException when a declared error class isn't a documented error.
      */
-    public function attach(OA\OpenApi $openapi, array $errorDefinitions): int
+    public function attach(OA\OpenApi $openapi, array $errorDefinitions, ?ErrorEnvelope $envelope = null): int
     {
+        $this->envelope = $envelope ?? new ErrorEnvelope();
         $this->definitions = [];
         foreach ($errorDefinitions as $definition) {
             $this->definitions[$definition->className] = $definition;
@@ -422,8 +429,8 @@ class OperationErrorAttacher
 
     /**
      * One error for the status: a `$ref` to its reusable response. Several: an
-     * inline response whose schema is a `oneOf` of their envelopes, discriminated
-     * on the `code` property.
+     * inline response whose `error` property is a `oneOf` of their error bodies,
+     * discriminated on `code` (see ErrorEnvelope::sharedStatusSchema()).
      *
      * @param  array<int, ErrorDefinition>  $definitions
      */
@@ -436,14 +443,9 @@ class OperationErrorAttacher
             ]);
         }
 
-        $refs = [];
-        $mapping = [];
         $lines = [];
 
         foreach ($definitions as $definition) {
-            $ref = '#/components/schemas/' . $definition->responseSchemaName;
-            $refs[] = new OA\Schema(['ref' => $ref]);
-            $mapping[$definition->code] = $ref;
             $lines[] = sprintf(
                 '- `%s`: %s',
                 $definition->code,
@@ -457,13 +459,7 @@ class OperationErrorAttacher
             'content' => [
                 new OA\MediaType([
                     'mediaType' => 'application/json',
-                    'schema' => new OA\Schema([
-                        'oneOf' => $refs,
-                        'discriminator' => new OA\Discriminator([
-                            'propertyName' => 'code',
-                            'mapping' => $mapping,
-                        ]),
-                    ]),
+                    'schema' => $this->envelope->sharedStatusSchema($definitions),
                 ]),
             ],
         ]);

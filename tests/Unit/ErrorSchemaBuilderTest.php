@@ -81,34 +81,49 @@ it('builds the details schema from non-envelope properties', function () {
         ->and($schemas)->not->toHaveKey('UnauthenticatedError');
 });
 
-it('builds the {Name}Response envelope with the agreed shape', function () {
+it('builds the {Name}Response envelope around the error object', function () {
     $schemas = schemasByName(makeErrorBuilder());
     $envelope = $schemas['InsufficientBalanceErrorResponse'];
     $props = propsOf($envelope);
 
-    expect(array_keys($props))->toBe(['status', 'data', 'error', 'code', 'details'])
-        ->and($envelope['required'])->toBe(['status', 'error', 'code']);
+    expect(array_keys($props))->toBe(['status', 'data', 'error'])
+        ->and($envelope['required'])->toBe(['status', 'error']);
 
     expect($props['status'])->toMatchArray(['type' => 'boolean', 'example' => false]);
-    expect($props['data'])->toMatchArray(['type' => 'array', 'maxItems' => 0, 'items' => ['type' => 'object']])
-        ->and($props['data'])->not->toHaveKey('default');
-    expect($props['error'])->toMatchArray(['type' => 'string', 'example' => 'Insufficient balance to complete this request'])
-        ->and($props['error'])->not->toHaveKey('default');
-    expect($props['code'])->toMatchArray(['type' => 'string', 'enum' => ['insufficient_balance'], 'example' => 'insufficient_balance']);
-    expect($props['details']['allOf'][0]['$ref'])->toBe('#/components/schemas/InsufficientBalanceError');
+    expect($props['data'])->toMatchArray(['type' => 'array', 'maxItems' => 0, 'items' => ['type' => 'object']]);
+    expect($props['error']['allOf'][0]['$ref'])->toBe('#/components/schemas/InsufficientBalanceErrorBody');
 });
 
-it('omits details when the class has no non-envelope properties and lifts #[EnvelopeField] props to the top level', function () {
+it('builds the {Name}Body error object with message, code and details', function () {
     $schemas = schemasByName(makeErrorBuilder());
-    $props = propsOf($schemas['ValidationErrorResponse']);
+    $body = $schemas['InsufficientBalanceErrorBody'];
+    $props = propsOf($body);
 
-    expect(array_keys($props))->toBe(['status', 'data', 'error', 'code', 'errors'])
+    expect(array_keys($props))->toBe(['message', 'code', 'details'])
+        ->and($body['required'])->toBe(['message', 'code']);
+
+    expect($props['message'])->toMatchArray(['type' => 'string', 'example' => 'Insufficient balance to complete this request'])
+        ->and($props['message'])->not->toHaveKey('default');
+    expect($props['code'])->toMatchArray(['type' => 'string', 'enum' => ['insufficient_balance'], 'example' => 'insufficient_balance']);
+    expect($props['details']['allOf'][0]['$ref'])->toBe('#/components/schemas/InsufficientBalanceError');
+
+    // Open schema: undocumented fields such as debug output still validate.
+    expect($body)->not->toHaveKey('additionalProperties');
+});
+
+it('omits details when the class has no non-envelope properties and lifts #[EnvelopeField] props into the error object', function () {
+    $schemas = schemasByName(makeErrorBuilder());
+    $props = propsOf($schemas['ValidationErrorBody']);
+
+    expect(array_keys($props))->toBe(['message', 'code', 'errors'])
         ->and($props['errors']['type'])->toBe('object')
         ->and($props['errors']['additionalProperties'])->toBe(['type' => 'array', 'items' => ['type' => 'string']])
         ->and($props['errors']['description'])->toBe('Field name to list of validation messages')
-        ->and($schemas['ValidationErrorResponse']['required'])->toBe(['status', 'error', 'code', 'errors']);
+        ->and($schemas['ValidationErrorBody']['required'])->toBe(['message', 'code', 'errors']);
 
-    expect(array_keys(propsOf($schemas['UnauthenticatedErrorResponse'])))->toBe(['status', 'data', 'error', 'code']);
+    // Envelope fields never leak to the response level.
+    expect(array_keys(propsOf($schemas['ValidationErrorResponse'])))->toBe(['status', 'data', 'error'])
+        ->and(array_keys(propsOf($schemas['UnauthenticatedErrorBody'])))->toBe(['message', 'code']);
 });
 
 it('builds the shared ErrorCode enum listing every code with its status and description', function () {
@@ -117,21 +132,84 @@ it('builds the shared ErrorCode enum listing every code with its status and desc
 
     expect($enum['type'])->toBe('string')
         ->and($enum['enum'])->toBe(['insufficient_balance', 'unauthenticated', 'validation_failed'])
+        ->and($enum['description'])->toContain('returned in `error.code`')
         ->and($enum['description'])->toContain('`insufficient_balance` (HTTP 402): The account balance cannot cover the requested operation.')
         ->and($enum['description'])->toContain('`unauthenticated` (HTTP 401): Unauthenticated');
 });
 
-it('honours envelope field renames, omissions and the code schema name from config', function () {
+it('honours response- and error-level field renames, omissions and the code schema name from config', function () {
     $schemas = schemasByName(makeErrorBuilder([
         'code_schema' => 'ApiErrorCode',
-        'fields' => ['status' => 'ok', 'data' => null, 'error' => 'message', 'code' => 'code', 'details' => 'meta'],
+        'response_fields' => ['status' => 'ok', 'data' => null, 'error' => 'failure'],
+        'error_fields' => ['message' => 'text', 'code' => 'reason', 'details' => 'meta'],
     ]));
 
-    $props = propsOf($schemas['InsufficientBalanceErrorResponse']);
-    expect(array_keys($props))->toBe(['ok', 'message', 'code', 'meta'])
-        ->and($schemas['InsufficientBalanceErrorResponse']['required'])->toBe(['ok', 'message', 'code'])
+    $response = $schemas['InsufficientBalanceErrorResponse'];
+    $body = $schemas['InsufficientBalanceErrorBody'];
+
+    expect(array_keys(propsOf($response)))->toBe(['ok', 'failure'])
+        ->and($response['required'])->toBe(['ok', 'failure'])
+        ->and(array_keys(propsOf($body)))->toBe(['text', 'reason', 'meta'])
+        ->and($body['required'])->toBe(['text', 'reason'])
         ->and($schemas)->toHaveKey('ApiErrorCode')
-        ->and($schemas)->not->toHaveKey('ErrorCode');
+        ->and($schemas)->not->toHaveKey('ErrorCode')
+        ->and($schemas['ApiErrorCode']['description'])->toContain('returned in `failure.reason`');
+});
+
+it('omits message from the error object when its name is null', function () {
+    $body = schemasByName(makeErrorBuilder(['error_fields' => ['message' => null]]))['InsufficientBalanceErrorBody'];
+
+    expect(array_keys(propsOf($body)))->toBe(['code', 'details'])
+        ->and($body['required'])->toBe(['code']);
+});
+
+it('rejects the removed errors.fields key with a pointer to its replacements', function () {
+    makeErrorBuilder(['fields' => ['code' => 'code']]);
+})->throws(OpenApiDocsException::class, 'errors.fields was replaced by errors.response_fields');
+
+it('refuses to omit the error object or its code', function (array $config, string $message) {
+    expect(fn () => makeErrorBuilder($config))->toThrow(OpenApiDocsException::class, $message);
+})->with([
+    'the error object' => [['response_fields' => ['error' => null]], 'errors.response_fields.error cannot be null'],
+    'the code' => [['error_fields' => ['code' => null]], 'errors.error_fields.code cannot be null'],
+]);
+
+it('rejects unknown and duplicate field names so a typo cannot silently fall back', function (array $config, string $message) {
+    expect(fn () => makeErrorBuilder($config))->toThrow(OpenApiDocsException::class, $message);
+})->with([
+    'unknown key' => [['error_fields' => ['mesage' => 'msg']], 'Unknown errors.error_fields key(s): mesage'],
+    'duplicate name' => [['response_fields' => ['status' => 'error']], 'errors.response_fields uses the name `error` more than once'],
+]);
+
+it('rejects an #[EnvelopeField] property that reuses an error-object field name', function () {
+    $dir = sys_get_temp_dir() . '/openapi-collide-' . uniqid();
+    mkdir($dir);
+    file_put_contents($dir . '/CollidingError.php', <<<'PHP'
+<?php
+namespace ErrorCollisionFixture;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\EnvelopeField;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCode;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\HttpStatus;
+use Spatie\LaravelData\Data;
+#[ErrorCode('colliding')]
+#[HttpStatus(400)]
+class CollidingError extends Data
+{
+    public function __construct(
+        #[EnvelopeField]
+        public string $code,
+    ) {}
+}
+PHP);
+    require_once $dir . '/CollidingError.php';
+
+    try {
+        expect(fn () => makeErrorBuilder([], $dir)->buildAll())
+            ->toThrow(OpenApiDocsException::class, 'CollidingError marks `code` as #[EnvelopeField]');
+    } finally {
+        array_map('unlink', glob($dir . '/*'));
+        rmdir($dir);
+    }
 });
 
 it('scans extra errors.paths in addition to the DTO paths', function () {

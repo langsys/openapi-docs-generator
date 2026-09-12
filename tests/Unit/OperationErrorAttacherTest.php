@@ -117,25 +117,52 @@ it('attaches a $ref to the reusable response when one error owns the status', fu
         ->and($responses['402'])->toBe(['$ref' => '#/components/responses/InsufficientBalanceError']);
 });
 
-it('uses oneOf with a code discriminator when several errors share a status', function () {
+it('puts a code-discriminated oneOf on the error property when several errors share a status', function () {
     $operation = operationFor(attacherController(), 'sharedStatus');
     (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
 
-    $schema = attachedResponses($operation)['422']['content']['application/json']['schema'];
+    $response = attachedResponses($operation)['422'];
+    $schema = $response['content']['application/json']['schema'];
 
-    expect($schema['oneOf'])->toBe([
-        ['$ref' => '#/components/schemas/BatchTooLargeErrorResponse'],
-        ['$ref' => '#/components/schemas/ValidationErrorResponse'],
+    // One envelope: OpenAPI 3.0 can't discriminate on the nested error.code from the response level.
+    expect(array_keys($schema['properties']))->toBe(['status', 'data', 'error'])
+        ->and($schema['required'])->toBe(['status', 'error'])
+        ->and($schema)->not->toHaveKey('oneOf');
+
+    $error = $schema['properties']['error'];
+
+    expect($error['oneOf'])->toBe([
+        ['$ref' => '#/components/schemas/BatchTooLargeErrorBody'],
+        ['$ref' => '#/components/schemas/ValidationErrorBody'],
     ])
-        ->and($schema['discriminator'])->toBe([
+        ->and($error['discriminator'])->toBe([
             'propertyName' => 'code',
             'mapping' => [
-                'batch_too_large' => '#/components/schemas/BatchTooLargeErrorResponse',
-                'validation_failed' => '#/components/schemas/ValidationErrorResponse',
+                'batch_too_large' => '#/components/schemas/BatchTooLargeErrorBody',
+                'validation_failed' => '#/components/schemas/ValidationErrorBody',
             ],
         ])
-        ->and(attachedResponses($operation)['422']['description'])
+        ->and($response['description'])
         ->toContain('- `batch_too_large`: The submitted batch has more items than the endpoint allows.');
+});
+
+it('builds the shared-status response from the envelope the schemas were built with', function () {
+    $builder = new DtoSchemaBuilder(
+        [dirname(__DIR__) . '/ErrorFixtures', dirname(__DIR__) . '/ErrorOperationFixtures'],
+        new ExampleGenerator([], []),
+        [],
+        ['response_fields' => ['error' => 'failure'], 'error_fields' => ['code' => 'reason']],
+    );
+    $builder->buildAll();
+
+    $operation = operationFor(attacherController(), 'sharedStatus');
+    (new OperationErrorAttacher())->attach(docFor($operation), $builder->getErrorDefinitions(), $builder->getErrorEnvelope());
+
+    $properties = attachedResponses($operation)['422']['content']['application/json']['schema']['properties'];
+
+    expect($properties)->toHaveKey('failure')
+        ->and($properties)->not->toHaveKey('error')
+        ->and($properties['failure']['discriminator']['propertyName'])->toBe('reason');
 });
 
 it('leaves a hand-written response for the same status untouched', function () {

@@ -572,20 +572,37 @@ class InsufficientBalanceError extends Data
 
 | Attribute | Target | Purpose |
 |---|---|---|
-| `#[ErrorCode(string $code, ?string $message = null)]` | class | The `code` slug and the default human `error` message. Presence marks the class as an error. |
+| `#[ErrorCode(string $code, ?string $message = null)]` | class | The `code` slug and the default human `message`. Presence marks the class as an error. |
 | `#[HttpStatus(int $status)]` | class | HTTP status the error is returned with. May be declared on a parent class. |
 | `#[Description('…')]` | class | Description of the reusable response and the entry in the error-code reference. |
-| `#[EnvelopeField]` | property | Emit this property at the top level of the envelope instead of under `details` (e.g. a validation `errors` map). |
-| `#[Throws(Error::class, …)]` | method | Declares which errors a controller action can return. |
+| `#[EnvelopeField]` | property | Emit this property at the top level of the `error` object instead of under `details` (e.g. a validation `errors` map). |
+| `#[Throws(Error::class, …)]` | method, class | Declares which errors a controller action, or every action of a controller, can return. |
+
+An error response carries everything inside one `error` object:
+
+```json
+{
+  "status": false,
+  "data": [],
+  "error": {
+    "message": "Insufficient balance to complete this request",
+    "code": "insufficient_balance",
+    "details": { "required": 500, "available": 120 }
+  }
+}
+```
 
 For each error class the generator emits:
 
-- **`InsufficientBalanceError`** — the details schema built from the class's non-envelope properties (omitted when there are none).
-- **`InsufficientBalanceErrorResponse`** — the error envelope: `{ status: false, data: [], error: "…", code: "insufficient_balance", details: InsufficientBalanceError }`, with `status`/`error`/`code` required. `data` is typed as an always-empty array; `error` carries the message as its `example`.
-- **`components.responses.InsufficientBalanceError`** — a reusable response (`$ref: '#/components/responses/InsufficientBalanceError'`) with the class description, `application/json` content and an `x-http-status` extension.
-- **`ErrorCode`** — one string enum of every code, whose description lists each code with its HTTP status and description. It is kept through [pruning](#clean-output-automatic-pruning) as the error-codes reference page even when nothing references it directly.
+- **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
+- **`InsufficientBalanceErrorBody`**: the error object. `message` carries the `#[ErrorCode]` message as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
+- **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array, and `error` references the body. `status` and `error` are required.
+- **`components.responses.InsufficientBalanceError`**: a reusable response with the class description, `application/json` content and an `x-http-status` extension.
+- **`ErrorCode`**: one string enum of every code, whose description lists each code with its HTTP status and description. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even when nothing references it directly.
 
-A validation error typically lifts its field map to the envelope:
+The schemas are open, with no `additionalProperties: false`. An app can add fields it chooses not to document, such as debug output for allow-listed developers, without failing response validation.
+
+A validation error typically lifts its field map into the error object:
 
 ```php
 #[ErrorCode('validation_failed', 'The given data was invalid')]
@@ -598,23 +615,30 @@ class ValidationError extends Data
         public array $errors,
     ) {}
 }
-// => { status, data, error, code, errors: { <field>: [string] } }
+// => { status, data, error: { message, code, errors: { <field>: [string] } } }
 ```
 
 A `@var array<string, T>` docblock on an `array` property is emitted as an `object` with `additionalProperties` (T scalar, `T[]`, or `mixed` for a free-form object); other arrays stay lists.
 
-Generation fails with a clear message when an error class has no `#[HttpStatus]` or two classes declare the same code.
+Generation fails with a clear message when an error class has no `#[HttpStatus]`, two classes declare the same code, or an `#[EnvelopeField]` property reuses an error-object field name.
 
-The envelope is configurable per documentation set under `errors` so each app can keep its own shape. A `null` field name omits that field:
+Field names are configurable per documentation set under `errors`, so each app can keep its own naming. A `null` name omits that field. Unknown keys and duplicate names fail generation, so a typo cannot silently fall back to a default:
 
 ```php
 'errors' => [
     'paths' => null,            // extra directories to scan; null = same as DTO discovery
     'code_schema' => 'ErrorCode',
-    'fields' => [
+
+    // Response level. `error` cannot be null.
+    'response_fields' => [
         'status' => 'status',
         'data' => 'data',
         'error' => 'error',
+    ],
+
+    // Inside the error object. `code` cannot be null.
+    'error_fields' => [
+        'message' => 'message',
         'code' => 'code',
         'details' => 'details',
     ],
@@ -690,7 +714,7 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | Errors for the status | Emitted response |
 |---|---|
 | One | `$ref` to `#/components/responses/{Name}` |
-| Several | Inline response whose schema is a `oneOf` of their `{Name}Response` envelopes, with `discriminator: { propertyName: code, mapping: { … } }` |
+| Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. |
 
 A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]` or `implied_errors` names a class that is not a documented error (no `#[ErrorCode]`, or never scanned — the message says which).
 

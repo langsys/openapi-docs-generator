@@ -59,7 +59,11 @@ test('a hand-written @OA\Response(ref=...) to an error response resolves and kee
     $doc = json_decode(file_get_contents($this->docsFile), true);
 
     expect($doc['paths']['/api/purchase']['post']['responses']['402']['$ref'])->toBe('#/components/responses/InsufficientBalanceError')
-        ->and($doc['components']['schemas'])->toHaveKeys(['InsufficientBalanceError', 'InsufficientBalanceErrorResponse']);
+        ->and($doc['components']['schemas'])->toHaveKeys([
+            'InsufficientBalanceError',
+            'InsufficientBalanceErrorBody',
+            'InsufficientBalanceErrorResponse',
+        ]);
 });
 
 test('the error-code enum survives pruning as a reference page while unreferenced error responses are pruned', function () {
@@ -69,16 +73,19 @@ test('the error-code enum survives pruning as a reference page while unreference
     expect($doc['components']['schemas'])->toHaveKey('ErrorCode')
         ->and($doc['components']['schemas']['ErrorCode']['enum'])->toBe(['insufficient_balance', 'unauthenticated', 'validation_failed'])
         ->and($doc['components']['responses'])->not->toHaveKey('ValidationError')
-        ->and($doc['components']['schemas'])->not->toHaveKey('ValidationErrorResponse');
+        ->and($doc['components']['schemas'])->not->toHaveKey('ValidationErrorResponse')
+        ->and($doc['components']['schemas'])->not->toHaveKey('ValidationErrorBody');
 });
 
-test('with pruning off every error response and envelope is emitted', function () {
+test('with pruning off every error response, envelope and error object is emitted', function () {
     makeErrorGenerator($this->docsFile, $this->yamlFile, prune: false)->generateDocs();
     $doc = json_decode(file_get_contents($this->docsFile), true);
+    $schemas = $doc['components']['schemas'];
 
     expect($doc['components']['responses'])->toHaveKeys(['InsufficientBalanceError', 'ValidationError', 'UnauthenticatedError'])
         ->and($doc['components']['responses']['ValidationError']['x-http-status'])->toBe(422)
         ->and($doc['components']['responses']['UnauthenticatedError']['x-http-status'])->toBe(401)
-        ->and($doc['components']['schemas']['ValidationErrorResponse']['properties'])->toHaveKey('errors')
-        ->and($doc['components']['schemas']['ValidationErrorResponse']['properties'])->not->toHaveKey('details');
+        ->and($schemas['ValidationErrorBody']['properties'])->toHaveKey('errors')
+        ->and($schemas['ValidationErrorBody']['properties'])->not->toHaveKey('details')
+        ->and($schemas['ValidationErrorResponse']['properties'])->not->toHaveKey('errors');
 });

@@ -85,19 +85,21 @@ test('a single declared error becomes a $ref to its reusable response, and stric
         ->and($doc['components']['responses']['InsufficientBalanceError']['x-http-status'])->toBe(402);
 });
 
-test('errors sharing a status become a oneOf discriminated on code', function () {
-    $doc = generateWithErrors($this->docsFile, $this->yamlFile);
+test('errors sharing a status become one envelope whose error property is a oneOf discriminated on code', function () {
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile); // validate_refs strict: every Body ref must resolve
 
     $schema = $doc['paths']['/api/batch']['post']['responses']['422']['content']['application/json']['schema'];
+    $error = $schema['properties']['error'];
 
-    expect($schema['oneOf'])->toBe([
-        ['$ref' => '#/components/schemas/BatchTooLargeErrorResponse'],
-        ['$ref' => '#/components/schemas/ValidationErrorResponse'],
-    ])
-        ->and($schema['discriminator']['propertyName'])->toBe('code')
-        ->and($schema['discriminator']['mapping'])->toBe([
-            'batch_too_large' => '#/components/schemas/BatchTooLargeErrorResponse',
-            'validation_failed' => '#/components/schemas/ValidationErrorResponse',
+    expect($schema)->not->toHaveKey('oneOf')
+        ->and($error['oneOf'])->toBe([
+            ['$ref' => '#/components/schemas/BatchTooLargeErrorBody'],
+            ['$ref' => '#/components/schemas/ValidationErrorBody'],
+        ])
+        ->and($error['discriminator']['propertyName'])->toBe('code')
+        ->and($error['discriminator']['mapping'])->toBe([
+            'batch_too_large' => '#/components/schemas/BatchTooLargeErrorBody',
+            'validation_failed' => '#/components/schemas/ValidationErrorBody',
         ]);
 });
 
@@ -108,19 +110,27 @@ test('a hand-written response for the same status wins', function () {
         ->toBe('Hand-written, wins over the attached one');
 });
 
-test('pruning keeps the schemas the attached responses reference', function () {
+test('pruning keeps exactly the schemas the attached responses reach', function () {
     $doc = generateWithErrors($this->docsFile, $this->yamlFile);
+    $schemas = $doc['components']['schemas'];
 
-    expect($doc['components']['schemas'])->toHaveKeys([
-        'InsufficientBalanceError',
+    expect($schemas)->toHaveKeys([
+        // /api/purchase: response ref -> Response -> Body -> details
         'InsufficientBalanceErrorResponse',
-        'ValidationErrorResponse',
+        'InsufficientBalanceErrorBody',
+        'InsufficientBalanceError',
+        // /api/batch shared 422: the Bodies directly, plus BatchTooLargeError's details
+        'ValidationErrorBody',
+        'BatchTooLargeErrorBody',
         'BatchTooLargeError',
-        'BatchTooLargeErrorResponse',
         'ErrorCode',
-    ])
-        // Nothing references the 401 error, so it is pruned.
-        ->and($doc['components']['schemas'])->not->toHaveKey('UnauthenticatedErrorResponse')
+    ]);
+
+    // The shared 422 references Bodies, not envelopes, so those envelopes are unreached.
+    expect($schemas)->not->toHaveKey('ValidationErrorResponse')
+        ->and($schemas)->not->toHaveKey('BatchTooLargeErrorResponse')
+        // Nothing references the 401 error at all.
+        ->and($schemas)->not->toHaveKey('UnauthenticatedErrorBody')
         ->and($doc['components']['responses'])->not->toHaveKey('UnauthenticatedError');
 });
 

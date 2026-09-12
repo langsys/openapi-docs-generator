@@ -17,6 +17,8 @@ final class ErrorDefinition
         public readonly string $schemaName,
         /** Envelope schema name, e.g. "InsufficientBalanceErrorResponse". */
         public readonly string $responseSchemaName,
+        /** Error object schema name, e.g. "InsufficientBalanceErrorBody". */
+        public readonly string $bodySchemaName,
         /** snake_case code from #[ErrorCode]. */
         public readonly string $code,
         /** Default human message from #[ErrorCode], if any. */
