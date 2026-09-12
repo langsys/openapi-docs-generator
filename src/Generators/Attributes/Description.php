@@ -4,7 +4,7 @@ namespace Langsys\OpenApiDocsGenerator\Generators\Attributes;
 
 use Attribute;
 
-#[Attribute(Attribute::TARGET_PROPERTY | Attribute::TARGET_PARAMETER)]
+#[Attribute(Attribute::TARGET_CLASS | Attribute::TARGET_PROPERTY | Attribute::TARGET_PARAMETER)]
 class Description extends OpenApiAttribute
 {
     public function __construct(
