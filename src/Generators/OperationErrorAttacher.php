@@ -4,6 +4,7 @@ namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Routing\Router;
+use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
 use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Data\OperationContext;
@@ -36,6 +37,10 @@ use Spatie\LaravelData\Data;
  *  3. Structural rules — an action taking a Spatie Data parameter implies the
  *     configured validation error; a route with a bound `{param}` implies the
  *     configured not-found error.
+ *  4. `implied_errors.rules` — {@see ImpliedErrorRule} implementations the app
+ *     owns, for conventions the framework cannot prove (an in-body authorization
+ *     call, a permission registry). The library ships no such rule: a heuristic
+ *     over an implementation idiom belongs with the app that owns the idiom.
  *
  * The errors are then grouped by HTTP status. A status with one error becomes a
  * `$ref` to its reusable `components.responses.{Name}`; a status shared by several
@@ -61,6 +66,9 @@ class OperationErrorAttacher
 
     /** 'model' (default) — only model-bound params; 'any' — any `{param}`. */
     private string $notFoundBinding;
+
+    /** @var array<int, ImpliedErrorRule> */
+    private array $rules;
 
     /**
      * @param  RouteResolver|null  $routeResolver  Needed for middleware and not-found rules;
@@ -92,6 +100,7 @@ class OperationErrorAttacher
         $this->validationErrors = array_values((array) ($impliedErrors['validation'] ?? []));
         $this->notFoundErrors = array_values((array) ($impliedErrors['not_found'] ?? []));
         $this->notFoundBinding = (string) ($impliedErrors['not_found_binding'] ?? 'model');
+        $this->rules = (new ImpliedErrorRuleFactory())->makeMany((array) ($impliedErrors['rules'] ?? []));
     }
 
     /**
@@ -192,15 +201,15 @@ class OperationErrorAttacher
     ): array {
         $classes = $this->declaredErrors($reflection);
 
-        if ($route !== null && $this->middlewareRules !== []) {
-            $context = new OperationContext(
-                operation: $operation,
-                pathItem: $pathItem,
-                httpMethod: $method,
-                path: $path,
-                route: $route,
-            );
+        $context = new OperationContext(
+            operation: $operation,
+            pathItem: $pathItem,
+            httpMethod: $method,
+            path: $path,
+            route: $route,
+        );
 
+        if ($route !== null) {
             foreach ($this->middlewareRules as $rule) {
                 if ($rule['filter']->matches($context)) {
                     $classes = array_merge($classes, $rule['classes']);
@@ -214,6 +223,10 @@ class OperationErrorAttacher
 
         if ($this->notFoundErrors !== [] && $this->hasBoundParameter($route, $reflection)) {
             $classes = array_merge($classes, $this->notFoundErrors);
+        }
+
+        foreach ($this->rules as $rule) {
+            $classes = array_merge($classes, array_values($rule->errorsFor($context, $reflection)));
         }
 
         return array_values(array_unique($classes));

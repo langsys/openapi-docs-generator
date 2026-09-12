@@ -1,21 +1,35 @@
 <?php
 
 use Illuminate\Routing\Route;
+use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
+use Langsys\OpenApiDocsGenerator\Data\OperationContext;
 use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OperationErrorAttacher;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError as ForbiddenStandIn;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\AttacherFixtureController;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\NoopRule;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\SourceScanRule;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\ClassThrowsController;
 use OpenApi\Annotations as OA;
 use OpenApi\Context;
 use OpenApi\Generator;
 
-const ATTACHER_CONTROLLER = AttacherFixtureController::class;
-const API_KEY_MW = 'App\\Middleware\\ApiKeyAuth';
+// Helpers, not constants: this file uses describe(), which re-evaluates the
+// top-level scope and would warn on a redefined const.
+function attacherController(): string
+{
+    return AttacherFixtureController::class;
+}
+
+function apiKeyMiddleware(): string
+{
+    return 'App\\Middleware\\ApiKeyAuth';
+}
 
 /** Every error definition from both error fixture directories. */
 function allErrorDefinitions(): array
@@ -93,7 +107,7 @@ function statusesOf(OA\Get $operation): array
 }
 
 it('attaches a $ref to the reusable response when one error owns the status', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'single');
+    $operation = operationFor(attacherController(), 'single');
     $added = (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
 
     $responses = attachedResponses($operation);
@@ -104,7 +118,7 @@ it('attaches a $ref to the reusable response when one error owns the status', fu
 });
 
 it('uses oneOf with a code discriminator when several errors share a status', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'sharedStatus');
+    $operation = operationFor(attacherController(), 'sharedStatus');
     (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
 
     $schema = attachedResponses($operation)['422']['content']['application/json']['schema'];
@@ -125,7 +139,7 @@ it('uses oneOf with a code discriminator when several errors share a status', fu
 });
 
 it('leaves a hand-written response for the same status untouched', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'single', [
+    $operation = operationFor(attacherController(), 'single', [
         new OA\Response(['response' => '200', 'description' => 'OK']),
         new OA\Response(['response' => '402', 'description' => 'Hand-written payment required']),
     ]);
@@ -136,11 +150,11 @@ it('leaves a hand-written response for the same status untouched', function () {
 });
 
 it('adds errors implied by the route middleware', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'bare');
+    $operation = operationFor(attacherController(), 'bare');
     $attacher = new OperationErrorAttacher(
-        routeResolver: attacherRouteResolver('api/things', [API_KEY_MW]),
+        routeResolver: attacherRouteResolver('api/things', [apiKeyMiddleware()]),
         impliedErrors: ['middleware' => ['apikey' => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]]],
-        aliasMap: ['apikey' => API_KEY_MW],
+        aliasMap: ['apikey' => apiKeyMiddleware()],
     );
     $attacher->attach(docFor($operation), allErrorDefinitions());
 
@@ -148,10 +162,10 @@ it('adds errors implied by the route middleware', function () {
 });
 
 it('does not imply errors when the route lacks the middleware', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'bare');
+    $operation = operationFor(attacherController(), 'bare');
     $attacher = new OperationErrorAttacher(
         routeResolver: attacherRouteResolver('api/things', ['App\\Middleware\\Other']),
-        impliedErrors: ['middleware' => [API_KEY_MW => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]]],
+        impliedErrors: ['middleware' => [apiKeyMiddleware() => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]]],
     );
 
     expect($attacher->attach(docFor($operation), allErrorDefinitions()))->toBe(0)
@@ -159,10 +173,10 @@ it('does not imply errors when the route lacks the middleware', function () {
 });
 
 it('deduplicates a class named by both #[Throws] and implied_errors', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'alsoImplied');
+    $operation = operationFor(attacherController(), 'alsoImplied');
     $attacher = new OperationErrorAttacher(
-        routeResolver: attacherRouteResolver('api/things', [API_KEY_MW]),
-        impliedErrors: ['middleware' => [API_KEY_MW => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]]],
+        routeResolver: attacherRouteResolver('api/things', [apiKeyMiddleware()]),
+        impliedErrors: ['middleware' => [apiKeyMiddleware() => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]]],
     );
     $added = $attacher->attach(docFor($operation), allErrorDefinitions());
 
@@ -171,8 +185,8 @@ it('deduplicates a class named by both #[Throws] and implied_errors', function (
 });
 
 it('implies the validation error for an action taking a Data parameter', function () {
-    $withData = operationFor(ATTACHER_CONTROLLER, 'store');
-    $without = operationFor(ATTACHER_CONTROLLER, 'bare');
+    $withData = operationFor(attacherController(), 'store');
+    $without = operationFor(attacherController(), 'bare');
     $config = ['validation' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError::class];
 
     (new OperationErrorAttacher(impliedErrors: $config))->attach(docFor($withData), allErrorDefinitions());
@@ -185,19 +199,19 @@ it('implies the validation error for an action taking a Data parameter', functio
 it('implies the not-found error only for a model-bound route parameter', function () {
     $config = ['not_found' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class];
 
-    $bound = operationFor(ATTACHER_CONTROLLER, 'show');
+    $bound = operationFor(attacherController(), 'show');
     (new OperationErrorAttacher(
         routeResolver: attacherRouteResolver('api/projects/{project}'),
         impliedErrors: $config,
     ))->attach(docFor($bound), allErrorDefinitions());
 
-    $unbound = operationFor(ATTACHER_CONTROLLER, 'showSlug');
+    $unbound = operationFor(attacherController(), 'showSlug');
     (new OperationErrorAttacher(
         routeResolver: attacherRouteResolver('api/projects/{slug}'),
         impliedErrors: $config,
     ))->attach(docFor($unbound), allErrorDefinitions());
 
-    $noParams = operationFor(ATTACHER_CONTROLLER, 'show');
+    $noParams = operationFor(attacherController(), 'show');
     (new OperationErrorAttacher(
         routeResolver: attacherRouteResolver('api/projects'),
         impliedErrors: $config,
@@ -209,7 +223,7 @@ it('implies the not-found error only for a model-bound route parameter', functio
 });
 
 it('implies the not-found error for any route parameter when not_found_binding is any', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'showSlug');
+    $operation = operationFor(attacherController(), 'showSlug');
     (new OperationErrorAttacher(
         routeResolver: attacherRouteResolver('api/projects/{slug}'),
         impliedErrors: [
@@ -229,9 +243,9 @@ it('applies a class-level #[Throws] to every action of the controller', function
 });
 
 it('applies no middleware or not-found rules without a route resolver', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'show');
+    $operation = operationFor(attacherController(), 'show');
     $added = (new OperationErrorAttacher(impliedErrors: [
-        'middleware' => [API_KEY_MW => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]],
+        'middleware' => [apiKeyMiddleware() => [\Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class]],
         'not_found' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError::class,
     ]))->attach(docFor($operation), allErrorDefinitions());
 
@@ -245,13 +259,13 @@ it('leaves operations without a controller context alone', function () {
 });
 
 it('fails with a clear message when #[Throws] names a class without #[ErrorCode]', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'notAnError');
+    $operation = operationFor(attacherController(), 'notAnError');
 
     (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
 })->throws(OpenApiDocsException::class, 'carries no #[ErrorCode]');
 
 it('fails when a declared error carries #[ErrorCode] but was never scanned', function () {
-    $operation = operationFor(ATTACHER_CONTROLLER, 'single');
+    $operation = operationFor(attacherController(), 'single');
 
     (new OperationErrorAttacher())->attach(docFor($operation), []);
 })->throws(OpenApiDocsException::class, 'was never scanned; add its directory');
@@ -261,4 +275,88 @@ it('does nothing when the document has no paths', function () {
 
     expect((new OperationErrorAttacher())->attach($openapi, allErrorDefinitions()))->toBe(0)
         ->and($openapi->paths)->toBe(Generator::UNDEFINED);
+});
+
+
+describe('custom implied error rules', function () {
+    it('runs a rule built from a class-and-args descriptor', function () {
+        $guarded = operationFor(attacherController(), 'guarded');
+        $plain = operationFor(attacherController(), 'bare');
+        $config = ['rules' => [
+            ['class' => SourceScanRule::class, 'args' => [['FakeGuard::authorize' => [ForbiddenStandIn::class]]]],
+        ]];
+
+        (new OperationErrorAttacher(impliedErrors: $config))->attach(docFor($guarded), allErrorDefinitions());
+        (new OperationErrorAttacher(impliedErrors: $config))->attach(docFor($plain), allErrorDefinitions());
+
+        expect(attachedResponses($guarded)['401'])->toBe(['$ref' => '#/components/responses/UnauthenticatedError'])
+            ->and(statusesOf($plain))->toBe(['200']);
+    });
+
+    it('accepts a rule given as an instance or a bare class name', function () {
+        $fromInstance = operationFor(attacherController(), 'guarded');
+        (new OperationErrorAttacher(impliedErrors: [
+            'rules' => [new SourceScanRule(['FakeGuard::authorize' => [ForbiddenStandIn::class]])],
+        ]))->attach(docFor($fromInstance), allErrorDefinitions());
+
+        $fromName = operationFor(attacherController(), 'guarded');
+        $added = (new OperationErrorAttacher(impliedErrors: [
+            'rules' => [NoopRule::class],
+        ]))->attach(docFor($fromName), allErrorDefinitions());
+
+        expect(statusesOf($fromInstance))->toBe(['200', '401'])
+            ->and($added)->toBe(0);
+    });
+
+    it('gives a rule the resolved route and the reflected action', function () {
+        $recorder = new class implements ImpliedErrorRule {
+            public array $seen = [];
+
+            public function errorsFor(OperationContext $context, ?ReflectionMethod $action): array
+            {
+                $this->seen = [
+                    'path' => $context->path,
+                    'method' => $context->httpMethod,
+                    'uri' => $context->route?->uri(),
+                    'action' => $action?->getName(),
+                ];
+
+                return [];
+            }
+        };
+
+        (new OperationErrorAttacher(
+            routeResolver: attacherRouteResolver('api/projects/{project}'),
+            impliedErrors: ['rules' => [$recorder]],
+        ))->attach(docFor(operationFor(attacherController(), 'show'), '/api/projects/{project}'), allErrorDefinitions());
+
+        expect($recorder->seen)->toBe([
+            'path' => '/api/projects/{project}',
+            'method' => 'get',
+            'uri' => 'api/projects/{project}',
+            'action' => 'show',
+        ]);
+    });
+
+    it('deduplicates a rule-supplied class against #[Throws]', function () {
+        $operation = operationFor(attacherController(), 'alsoImplied');
+        $added = (new OperationErrorAttacher(impliedErrors: [
+            'rules' => [new SourceScanRule(['public function' => [ForbiddenStandIn::class]])],
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        expect($added)->toBe(1)
+            ->and(attachedResponses($operation)['401'])->toBe(['$ref' => '#/components/responses/UnauthenticatedError']);
+    });
+
+    it('rejects a rule class that does not exist', function () {
+        new OperationErrorAttacher(impliedErrors: ['rules' => ['App\\Nope\\MissingRule']]);
+    })->throws(OpenApiDocsException::class, 'Implied error rule class does not exist');
+
+    it('rejects a rule class that does not implement the contract', function () {
+        new OperationErrorAttacher(impliedErrors: ['rules' => [attacherController()]]);
+    })->throws(OpenApiDocsException::class, 'must implement');
+
+    it('rejects an unrecognized rule descriptor', function () {
+        new OperationErrorAttacher(impliedErrors: ['rules' => [['nonsense' => true]]]);
+    })->throws(OpenApiDocsException::class, 'Unrecognized implied error rule descriptor');
 });

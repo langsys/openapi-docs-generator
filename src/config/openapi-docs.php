@@ -187,6 +187,15 @@ return [
             //                       implicitly by the action's signature or by Route::bind()
             //   'any'             — any {param} in the route URI
             'not_found_binding' => 'model',
+
+            // Your own rules, for conventions the framework cannot prove — an
+            // in-body authorization call, a permission registry, a service
+            // contract. Each implements Contracts\ImpliedErrorRule and receives
+            // the operation, its resolved route and its reflected action.
+            // Descriptors: a class name, ['class' => X, 'args' => [...]], or an
+            // instance.
+            // e.g. ['class' => \App\Docs\AuthorizesRule::class, 'args' => [...]]
+            'rules' => [],
         ],
 
         // --- Output Paths ---

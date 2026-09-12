@@ -660,6 +660,29 @@ Errors can also be implied, so they never have to be repeated at all. Configure 
 ],
 ```
 
+When a convention lives somewhere the framework cannot prove — an in-body authorization call, a permission registry, a service contract — write a rule instead of a heuristic in config. A rule implements `Contracts\ImpliedErrorRule` and receives the operation, its resolved route and its reflected action:
+
+```php
+use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
+use Langsys\OpenApiDocsGenerator\Data\OperationContext;
+use ReflectionMethod;
+
+class AuthorizesRule implements ImpliedErrorRule
+{
+    public function errorsFor(OperationContext $context, ?ReflectionMethod $action): array
+    {
+        return $action !== null && $this->bodyOf($action) !== null
+            && str_contains($this->bodyOf($action), 'AccessGuard::authorize')
+                ? [ForbiddenError::class]
+                : [];
+    }
+}
+
+// 'implied_errors' => ['rules' => [AuthorizesRule::class]],
+```
+
+Descriptors accept a class name, `['class' => …, 'args' => […]]`, or an instance. The library ships no such rule on purpose: a heuristic over an implementation idiom belongs with the app that owns the idiom, where a refactor that breaks it is visible.
+
 Middleware is matched against the route's fully-resolved middleware — the same ground truth [filtered sets](#filtered-documentation-sets) use — so it works however the middleware was attached (directly, by group, by alias, or by class).
 
 An operation's errors are the union of all sources, deduplicated by class, then grouped by HTTP status:

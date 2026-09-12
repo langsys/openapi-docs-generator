@@ -48,4 +48,9 @@ class AttacherFixtureController
     public function bare(): void
     {
     }
+
+    public function guarded(): void
+    {
+        FakeGuard::authorize('view_things');
+    }
 }
