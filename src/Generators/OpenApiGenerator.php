@@ -388,7 +388,8 @@ class OpenApiGenerator
 
     /**
      * Emit a reusable `components.responses.{Name}` for every discovered error:
-     * the class's MESSAGE as description, `application/json` content `$ref`ing
+     * "`code`: MESSAGE" as description (the notation shared-status responses list,
+     * see ErrorDefinition::codeAndMessage()), `application/json` content `$ref`ing
      * the `{Name}Response` envelope, and `x-http-status` from its STATUS.
      * An annotation-defined response with the same name takes precedence.
      * Errors no operation references are removed later by scopeErrorsToOperations().
@@ -418,7 +419,7 @@ class OpenApiGenerator
 
             $this->openApi->components->responses[] = new OA\Response([
                 'response' => $definition->schemaName,
-                'description' => $definition->message,
+                'description' => $definition->codeAndMessage(),
                 'content' => [
                     new OA\MediaType([
                         'mediaType' => 'application/json',

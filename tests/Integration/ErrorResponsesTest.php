@@ -43,14 +43,14 @@ function makeErrorGenerator(string $docsFile, string $yamlFile, bool $prune = tr
     );
 }
 
-test('emits components.responses.{Name} with MESSAGE as description, an envelope $ref and x-http-status', function () {
+test('emits components.responses.{Name} with `code`: MESSAGE as description, an envelope $ref and x-http-status', function () {
     $generator = makeErrorGenerator($this->docsFile, $this->yamlFile);
     $generator->generateDocs();
     $doc = json_decode(file_get_contents($this->docsFile), true);
 
     $response = $doc['components']['responses']['InsufficientBalanceError'];
 
-    expect($response['description'])->toBe('Insufficient balance to complete this request')
+    expect($response['description'])->toBe('`insufficient_balance`: Insufficient balance to complete this request')
         ->and($response['x-http-status'])->toBe(402)
         ->and($response['content']['application/json']['schema']['$ref'])->toBe('#/components/schemas/InsufficientBalanceErrorResponse');
 

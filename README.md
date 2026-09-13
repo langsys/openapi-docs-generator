@@ -628,8 +628,10 @@ For each error the operations reference, the generator emits:
 - **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
 - **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
 - **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array, and `error` references the body. `status` and `error` are required.
-- **`components.responses.InsufficientBalanceError`**: a reusable response with `MESSAGE` as its description, `application/json` content and an `x-http-status` extension.
+- **`components.responses.InsufficientBalanceError`**: a reusable response with `application/json` content and an `x-http-status` extension.
 - **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and `MESSAGE`. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
+
+Every error response's description carries ``` `code`: MESSAGE ```, e.g. ``` `too_many_requests`: Too many requests. Please try again later. ``` A status with one error shows that single line; a status several errors share shows the same lines under a `Possible errors:` header.
 
 **Only referenced errors are documented.** An error no operation can return is an internal failure mode, not API surface. Its schemas and response are left out whether or not `prune_unused_components` is on, and the `ErrorCode` enum lists exactly the errors that remain, so each documentation set publishes an honest code list. An error counts as referenced when an operation reaches it through `#[Throws]`, `implied_errors`, or a hand-written `$ref`. With pruning off, a schema you keep that references an error keeps that error too, so no reference is ever left dangling.
 

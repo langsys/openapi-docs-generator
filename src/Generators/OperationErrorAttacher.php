@@ -464,11 +464,7 @@ class OperationErrorAttacher
         $lines = [];
 
         foreach ($definitions as $definition) {
-            $lines[] = sprintf(
-                '- `%s`: %s',
-                $definition->code,
-                $definition->message,
-            );
+            $lines[] = '- ' . $definition->codeAndMessage();
         }
 
         return new OA\Response([

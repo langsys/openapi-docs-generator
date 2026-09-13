@@ -113,7 +113,8 @@ it('discovers every concrete subclass of errors.base_class and reads its constan
         ->and($balance->bodySchemaName)->toBe('InsufficientBalanceErrorBody')
         ->and($balance->status)->toBe(402)
         ->and($balance->message)->toBe('Insufficient balance to complete this request')
-        ->and($balance->hasDetails)->toBeTrue();
+        ->and($balance->hasDetails)->toBeTrue()
+        ->and($balance->codeAndMessage())->toBe('`insufficient_balance`: Insufficient balance to complete this request');
 });
 
 it('resolves STATUS from an int, an int-backed enum, and abstract or concrete parents', function () {

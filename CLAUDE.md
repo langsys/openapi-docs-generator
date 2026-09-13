@@ -120,7 +120,7 @@ class BreakerNotFoundError extends NotFoundError  // a specific failure mode
 
 - `CODE` and `MESSAGE` are non-empty strings that each concrete error class **declares itself**: `ReflectionClassConstant::getDeclaringClass()` must be the class. Constants inherit silently, so this is the guard that stops two failure modes sharing a code.
 - `STATUS` is an int or an int-backed enum (read via `->value`), HTTP 100–599, and may be inherited from any parent, abstract or concrete. That is the point of descendants.
-- `MESSAGE` is also the documentation text: `components.responses.{Name}.description`, the `{Name}Body.message` example, and each `ErrorCode` enum line. A class-level `#[Description]` on an error class or its parents is rejected, not ignored, so the same sentence is never written twice.
+- `MESSAGE` is also the documentation text: the `{Name}Body.message` example, each `ErrorCode` enum line, and every error response description, which carries ``` `code`: MESSAGE ``` via `ErrorDefinition::codeAndMessage()`. That line alone is `components.responses.{Name}.description`; on a shared status the same lines are listed under `Possible errors:`. A class-level `#[Description]` on an error class or its parents is rejected, not ignored, so the same sentence is never written twice.
 - Hard failures (`OpenApiDocsException`, before writing): a missing or inherited `CODE`/`MESSAGE`, an empty value, a duplicate `CODE`, an unresolvable or out-of-range `STATUS`, a class-level `#[Description]`, an `#[EnvelopeField]` reusing an error-object field name, and a non-existent or non-Data `errors.base_class`.
 - Unchanged by the contract: `#[Throws]`, `#[EnvelopeField]`, property-level `#[Description]`, `implied_errors`, rules, and the envelope shape (`ErrorEnvelope`).
 - **Scoping.** Only errors the documentation set's operations reference are documented (`OpenApiGenerator::scopeErrorsToOperations()`), independent of `prune_unused_components`. So internal errors, such as those of super-admin-only routes, never leak into a set's spec, and each set's `ErrorCode` list is honest. With pruning off, kept non-error components also count as roots, so a kept schema that references an error keeps it.
@@ -139,7 +139,7 @@ class BreakerNotFoundError extends NotFoundError  // a specific failure mode
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (258 tests, 719 assertions).
+Tests use Pest with Orchestra Testbench (259 tests, 723 assertions).
 
 | Test File | What It Covers |
 |---|---|

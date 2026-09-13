@@ -208,3 +208,20 @@ test('with pruning off, a kept schema keeps the error it references, so no $ref 
         ->and($schemas['NotFoundExample']['properties']['error']['$ref'])->toBe('#/components/schemas/NotFoundErrorBody')
         ->and($schemas['ErrorCode']['enum'])->toContain('not_found');
 });
+
+test('single-error and shared-status responses describe errors in the same `code`: MESSAGE notation', function () {
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile);
+
+    // POST /api/purchase: one error at 402, a $ref to the reusable response.
+    expect($doc['paths']['/api/purchase']['post']['responses']['402']['$ref'])
+        ->toBe('#/components/responses/InsufficientBalanceError')
+        ->and($doc['components']['responses']['InsufficientBalanceError']['description'])
+        ->toBe('`insufficient_balance`: Insufficient balance to complete this request');
+
+    // POST /api/batch: two errors share 422, listed under a header in the same notation.
+    expect($doc['paths']['/api/batch']['post']['responses']['422']['description'])->toBe(
+        "Possible errors:\n\n"
+        . "- `batch_too_large`: The submitted batch has more items than the endpoint allows.\n"
+        . '- `validation_failed`: One or more request fields failed validation.'
+    );
+});

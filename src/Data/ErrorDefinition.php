@@ -31,4 +31,15 @@ final class ErrorDefinition
         public readonly bool $hasDetails,
     ) {
     }
+
+    /**
+     * The one notation every error response description uses: "`code`: MESSAGE".
+     *
+     * A status with a single error shows this line as its description; a status
+     * several errors share lists these lines under "Possible errors:".
+     */
+    public function codeAndMessage(): string
+    {
+        return sprintf('`%s`: %s', $this->code, $this->message);
+    }
 }
