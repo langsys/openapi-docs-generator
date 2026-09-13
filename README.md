@@ -59,15 +59,18 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
 php artisan openapi:generate
   |
   +-- Scan controller annotations (zircote/swagger-php)
-  +-- Reflect on Spatie Data DTOs -> build OpenAPI Schema objects in memory
   +-- (Filtered sets) Select operations by their route's middleware
-  +-- Merge DTO schemas into the OpenAPI model
+  +-- Reflect on Spatie Data DTOs -> build OpenAPI Schema objects in memory
+  +-- Discover error classes (subclasses of errors.base_class) -> error schemas and reusable responses
+  +-- Merge DTO and error schemas into the OpenAPI model
+  +-- Attach error responses to operations (#[Throws], implied_errors, rules)
+  +-- Scope error docs to the errors operations reference (even with pruning off)
   +-- Prune components/tags nothing references (clean output)
   +-- Inject security definitions from config
   +-- Write api-docs.json / api-docs.yaml
 ```
 
-DTO-generated schemas are **additive**: if a schema with the same name already exists from your annotations, the annotation version wins.
+DTO-generated schemas are **additive**: if a schema with the same name already exists from your annotations, the annotation version wins. The error steps are covered in [API Errors](#api-errors).
 
 ## Requirements
 
@@ -623,11 +626,13 @@ An error response carries everything inside one `error` object:
 }
 ```
 
+The `data` key suits apps whose success and error responses share one envelope. If yours doesn't, set `response_fields.data` to `null` and error responses become `{ status, error }`.
+
 For each error the operations reference, the generator emits:
 
 - **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
 - **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
-- **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array, and `error` references the body. `status` and `error` are required.
+- **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array unless you drop it, and `error` references the body. `status` and `error` are required.
 - **`components.responses.InsufficientBalanceError`**: a reusable response with `application/json` content and an `x-http-status` extension.
 - **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and `MESSAGE`. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
 
@@ -668,7 +673,7 @@ Field names are configurable per documentation set under `errors`, so each app c
     // Response level. `error` cannot be null.
     'response_fields' => [
         'status' => 'status',
-        'data' => 'data',
+        'data' => 'data',       // null drops the always-empty key: { status, error }
         'error' => 'error',
     ],
 
