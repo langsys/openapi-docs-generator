@@ -728,6 +728,7 @@ Errors can also be implied, so they never have to be repeated at all. Configure 
 When a convention lives somewhere the framework cannot prove — an in-body authorization call, a permission registry, a service contract — write a rule instead of a heuristic in config. A rule implements `Contracts\ImpliedErrorRule` and receives the operation, its resolved route and its reflected action:
 
 ```php
+use App\Http\Errors\ForbiddenError;
 use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Data\OperationContext;
 use ReflectionMethod;
@@ -736,10 +737,20 @@ class AuthorizesRule implements ImpliedErrorRule
 {
     public function errorsFor(OperationContext $context, ?ReflectionMethod $action): array
     {
-        return $action !== null && $this->bodyOf($action) !== null
-            && str_contains($this->bodyOf($action), 'AccessGuard::authorize')
-                ? [ForbiddenError::class]
-                : [];
+        if ($action === null || $action->getFileName() === false) {
+            return [];
+        }
+
+        // Only the action's own source lines, not the whole controller.
+        $lines = array_slice(
+            file($action->getFileName()),
+            $action->getStartLine() - 1,
+            $action->getEndLine() - $action->getStartLine() + 1,
+        );
+
+        return str_contains(implode('', $lines), 'AccessGuard::authorize(')
+            ? [ForbiddenError::class]
+            : [];
     }
 }
 
