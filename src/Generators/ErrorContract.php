@@ -30,10 +30,15 @@ use Spatie\LaravelData\Data;
  * silently, and an inherited CODE would make two failure modes indistinguishable.
  * STATUS may be inherited, since sharing a status is what a specific error's parent
  * is for. MESSAGE doubles as the documentation text, so a class-level
- * #[Description] is rejected rather than silently ignored.
+ * #[Description] is rejected rather than silently ignored. MESSAGE may contain
+ * `{marker}` placeholders, and each must name a public property of the class,
+ * which fills it.
  */
 final class ErrorContract
 {
+    /** A `{marker}` placeholder in MESSAGE: a lowercase name in braces. */
+    public const MARKER_PATTERN = '/\{([a-z][a-z0-9_]*)\}/';
+
     /** @var array<int, class-string> */
     private array $baseClasses = [];
 
@@ -93,7 +98,7 @@ final class ErrorContract
     /**
      * Read and validate an error class's identity.
      *
-     * @return array{code: string, message: string, status: int}
+     * @return array{code: string, message: string, status: int, markers: array<int, string>}
      *
      * @throws OpenApiDocsException naming the class and the rule it breaks.
      */
@@ -101,10 +106,14 @@ final class ErrorContract
     {
         $this->rejectClassDescription($class);
 
+        $code = $this->ownString($class, 'CODE');
+        $message = $this->ownString($class, 'MESSAGE');
+
         return [
-            'code' => $this->ownString($class, 'CODE'),
-            'message' => $this->ownString($class, 'MESSAGE'),
+            'code' => $code,
+            'message' => $message,
             'status' => $this->status($class),
+            'markers' => $this->markers($class, $message),
         ];
     }
 
@@ -189,5 +198,35 @@ final class ErrorContract
                 ));
             }
         }
+    }
+
+    /**
+     * The `{marker}` names in MESSAGE, in order of first appearance. Each must name a
+     * public, non-static property of the class, since that property fills it.
+     *
+     * @return array<int, string>
+     *
+     * @throws OpenApiDocsException
+     */
+    private function markers(ReflectionClass $class, string $message): array
+    {
+        preg_match_all(self::MARKER_PATTERN, $message, $matches);
+        $markers = array_values(array_unique($matches[1]));
+
+        foreach ($markers as $marker) {
+            $property = $class->hasProperty($marker) ? $class->getProperty($marker) : null;
+
+            if ($property === null || ! $property->isPublic() || $property->isStatic()) {
+                throw new OpenApiDocsException(sprintf(
+                    '%s::MESSAGE uses the marker {%s}, but %s has no public property $%s to fill it; add the property or remove the marker.',
+                    $class->getName(),
+                    $marker,
+                    $class->getShortName(),
+                    $marker,
+                ));
+            }
+        }
+
+        return $markers;
     }
 }

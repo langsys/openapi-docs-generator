@@ -66,8 +66,8 @@ function definitionsByCode(DtoSchemaBuilder $builder): array
 
 /**
  * Write one class declaration into its own temp directory, in a unique namespace,
- * and load it. The declaration can use ApiError, NotFoundError, Description and
- * EnvelopeField unqualified.
+ * and load it. The declaration can use ApiError, NotFoundError, Description,
+ * EnvelopeField and Example unqualified.
  */
 function errorClassDir(string $declaration): string
 {
@@ -81,6 +81,7 @@ function errorClassDir(string $declaration): string
         "namespace {$namespace};",
         'use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Description;',
         'use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\EnvelopeField;',
+        'use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Example;',
         'use Langsys\\OpenApiDocsGenerator\\Tests\\ErrorFixtures\\ApiError;',
         'use Langsys\\OpenApiDocsGenerator\\Tests\\ErrorFixtures\\NotFoundError;',
         '',
@@ -227,6 +228,54 @@ class DescribedError extends ApiError
 }',
         'CollidingError marks `code` as #[EnvelopeField]',
     ],
+    'envelope field reusing template' => [
+        'class TemplateCollisionError extends ApiError
+{
+    public const CODE = "template_collision";
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+
+    public function __construct(
+        #[EnvelopeField]
+        public string $template,
+    ) {}
+}',
+        'TemplateCollisionError marks `template` as #[EnvelopeField]',
+    ],
+    'envelope field reusing params' => [
+        'class ParamsCollisionError extends ApiError
+{
+    public const CODE = "params_collision";
+    public const MESSAGE = "m";
+    public const STATUS = 400;
+
+    public function __construct(
+        #[EnvelopeField]
+        public array $params,
+    ) {}
+}',
+        'ParamsCollisionError marks `params` as #[EnvelopeField]',
+    ],
+    'MESSAGE marker with no property' => [
+        'class UnfilledMarkerError extends ApiError
+{
+    public const CODE = "unfilled_marker";
+    public const MESSAGE = "Up to {limit} items";
+    public const STATUS = 422;
+}',
+        'UnfilledMarkerError::MESSAGE uses the marker {limit}, but UnfilledMarkerError has no public property $limit',
+    ],
+    'MESSAGE marker naming a non-public property' => [
+        'class PrivateMarkerError extends ApiError
+{
+    public const CODE = "private_marker";
+    public const MESSAGE = "Up to {limit} items";
+    public const STATUS = 422;
+
+    private int $limit = 3;
+}',
+        'PrivateMarkerError::MESSAGE uses the marker {limit}',
+    ],
 ]);
 
 it('rejects two error classes declaring the same CODE', function () {
@@ -281,8 +330,12 @@ it('builds the {Name}Body error object with MESSAGE as the message example', fun
     $body = $schemas['InsufficientBalanceErrorBody'];
     $props = propsOf($body);
 
-    expect(array_keys($props))->toBe(['message', 'code', 'details'])
-        ->and($body['required'])->toBe(['message', 'code']);
+    expect(array_keys($props))->toBe(['message', 'code', 'template', 'details'])
+        ->and($body['required'])->toBe(['message', 'code', 'template']);
+
+    // No markers in MESSAGE: template is MESSAGE verbatim and params is omitted.
+    expect($props['template'])->toMatchArray(['type' => 'string', 'example' => 'Insufficient balance to complete this request'])
+        ->and($props)->not->toHaveKey('params');
 
     expect($props['message'])->toMatchArray(['type' => 'string', 'example' => 'Insufficient balance to complete this request'])
         ->and($props['message'])->not->toHaveKey('default');
@@ -297,15 +350,15 @@ it('omits details when the class has no non-envelope properties and lifts #[Enve
     $schemas = schemasByName(makeErrorBuilder());
     $props = propsOf($schemas['ValidationErrorBody']);
 
-    expect(array_keys($props))->toBe(['message', 'code', 'errors'])
+    expect(array_keys($props))->toBe(['message', 'code', 'template', 'errors'])
         ->and($props['errors']['type'])->toBe('object')
         ->and($props['errors']['additionalProperties'])->toBe(['type' => 'array', 'items' => ['type' => 'string']])
         ->and($props['errors']['description'])->toBe('Field name to list of validation messages')
-        ->and($schemas['ValidationErrorBody']['required'])->toBe(['message', 'code', 'errors']);
+        ->and($schemas['ValidationErrorBody']['required'])->toBe(['message', 'code', 'template', 'errors']);
 
     // Envelope fields never leak to the response level.
     expect(array_keys(propsOf($schemas['ValidationErrorResponse'])))->toBe(['status', 'data', 'error'])
-        ->and(array_keys(propsOf($schemas['UnauthenticatedErrorBody'])))->toBe(['message', 'code']);
+        ->and(array_keys(propsOf($schemas['UnauthenticatedErrorBody'])))->toBe(['message', 'code', 'template']);
 });
 
 it('builds the ErrorCode enum only for the errors it is given, documented by MESSAGE', function () {
@@ -343,8 +396,8 @@ it('honours response- and error-level field renames, omissions and the code sche
 
     expect(array_keys(propsOf($response)))->toBe(['ok', 'failure'])
         ->and($response['required'])->toBe(['ok', 'failure'])
-        ->and(array_keys(propsOf($body)))->toBe(['text', 'reason', 'meta'])
-        ->and($body['required'])->toBe(['text', 'reason']);
+        ->and(array_keys(propsOf($body)))->toBe(['text', 'reason', 'template', 'meta'])
+        ->and($body['required'])->toBe(['text', 'reason', 'template']);
 
     $enum = $builder->buildErrorCodeSchema($builder->getErrorDefinitions());
 
@@ -356,8 +409,8 @@ it('honours response- and error-level field renames, omissions and the code sche
 it('omits message from the error object when its name is null', function () {
     $body = schemasByName(makeErrorBuilder(['error_fields' => ['message' => null]]))['InsufficientBalanceErrorBody'];
 
-    expect(array_keys(propsOf($body)))->toBe(['code', 'details'])
-        ->and($body['required'])->toBe(['code']);
+    expect(array_keys(propsOf($body)))->toBe(['code', 'template', 'details'])
+        ->and($body['required'])->toBe(['code', 'template']);
 });
 
 it('rejects the removed errors.fields key with a pointer to its replacements', function () {
@@ -383,4 +436,74 @@ it('scans extra errors.paths in addition to the DTO paths', function () {
 
     expect($names)->toContain('InsufficientBalanceErrorResponse')
         ->and($names)->toContain('ExampleData'); // a regular DTO from tests/Data still builds
+});
+
+// -----------------------------------------------------------------------------
+// Message templates
+// -----------------------------------------------------------------------------
+
+it('documents params from MESSAGE markers using the same-named public properties', function () {
+    $dir = errorClassDir('class PlanLimitError extends ApiError
+{
+    public const CODE = "plan_limit";
+    public const MESSAGE = "Your {plan} plan allows up to {limit} projects.";
+    public const STATUS = 402;
+
+    public function __construct(
+        #[Example(5)]
+        #[Description("Maximum projects on the plan")]
+        public int $limit,
+        public string $plan,
+    ) {}
+}');
+
+    try {
+        $body = schemasByName(makeErrorBuilder([], $dir))['PlanLimitErrorBody'];
+        $props = propsOf($body);
+
+        expect(array_keys($props))->toBe(['message', 'code', 'template', 'params', 'details'])
+            ->and($body['required'])->toBe(['message', 'code', 'template', 'params']);
+
+        expect($props['template'])->toMatchArray(['type' => 'string', 'example' => 'Your {plan} plan allows up to {limit} projects.'])
+            ->and($props['template']['description'])->toContain('`{name}` markers are filled from `params`');
+
+        // One property per marker, in order of first appearance, documented like any DTO property.
+        expect($props['params']['type'])->toBe('object')
+            ->and($props['params']['required'])->toBe(['plan', 'limit'])
+            ->and(array_keys($props['params']['properties']))->toBe(['plan', 'limit'])
+            ->and($props['params']['properties']['limit'])->toMatchArray(['type' => 'integer', 'example' => 5, 'description' => 'Maximum projects on the plan'])
+            ->and($props['params']['properties']['plan']['type'])->toBe('string');
+
+        // {limit} has an #[Example], so it is filled; {plan} has none, so it stays a marker.
+        expect($props['message']['example'])->toBe('Your {plan} plan allows up to 5 projects.')
+            ->and($props['message']['description'])->toBe('Human-readable message: `template` with `params` filled in');
+    } finally {
+        removeErrorClassDir($dir);
+    }
+});
+
+it('omits template and params when their names are null, and still fills the message example', function () {
+    $dir = errorClassDir('class QuietPlanLimitError extends ApiError
+{
+    public const CODE = "quiet_plan_limit";
+    public const MESSAGE = "Up to {limit} projects.";
+    public const STATUS = 402;
+
+    public function __construct(
+        #[Example(3)]
+        public int $limit,
+    ) {}
+}');
+
+    try {
+        $body = schemasByName(makeErrorBuilder(['error_fields' => ['template' => null, 'params' => null]], $dir))['QuietPlanLimitErrorBody'];
+        $props = propsOf($body);
+
+        expect(array_keys($props))->toBe(['message', 'code', 'details'])
+            ->and($body['required'])->toBe(['message', 'code'])
+            ->and($props['message']['example'])->toBe('Up to 3 projects.')
+            ->and($props['message']['description'])->toBe('Human-readable error message');
+    } finally {
+        removeErrorClassDir($dir);
+    }
 });

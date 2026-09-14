@@ -589,7 +589,7 @@ class ProjectNotFoundError extends NotFoundError
 | Constant | Type | Rule |
 |---|---|---|
 | `CODE` | string | The slug clients branch on. Every concrete error class declares its own. |
-| `MESSAGE` | string | The default human message, and the documentation text. Every concrete error class declares its own. |
+| `MESSAGE` | string | The default human message, and the documentation text. Every concrete error class declares its own. May contain [`{marker}` placeholders](#message-templates). |
 | `STATUS` | int, or an int-backed enum | The HTTP status. May be inherited, which is what a specific error's parent is for. |
 
 Typed class constants such as `public const string CODE` work too, on PHP 8.3 and later.
@@ -600,7 +600,8 @@ Constants inherit silently, so a subclass that forgot to redeclare `CODE` would 
 - two error classes declare the same `CODE`;
 - no `STATUS` can be resolved, or it is not an HTTP status between 100 and 599;
 - an error class carries a class-level `#[Description]`, because `MESSAGE` already documents it;
-- an `#[EnvelopeField]` property reuses an error-object field name.
+- an `#[EnvelopeField]` property reuses an error-object field name;
+- `MESSAGE` contains a `{marker}` that names no public property of the class.
 
 Public properties are the error's typed details. These attributes work with errors:
 
@@ -621,6 +622,7 @@ An error response carries everything inside one `error` object:
   "error": {
     "message": "Insufficient balance to complete this request",
     "code": "insufficient_balance",
+    "template": "Insufficient balance to complete this request",
     "details": { "required": 500, "available": 120 }
   }
 }
@@ -631,10 +633,46 @@ The `data` key suits apps whose success and error responses share one envelope. 
 For each error the operations reference, the generator emits:
 
 - **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
-- **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message` and `code` are required.
+- **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `template` is `MESSAGE` verbatim, `params` documents its markers when it has any, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message`, `code` and `template` are required.
 - **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array unless you drop it, and `error` references the body. `status` and `error` are required.
 - **`components.responses.InsufficientBalanceError`**: a reusable response with `application/json` content and an `x-http-status` extension.
 - **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and `MESSAGE`. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
+
+#### Message templates
+
+`MESSAGE` is source text that may contain `{marker}` placeholders, so a client can translate it and then fill in the values:
+
+```php
+class PlanLimitError extends ApiError
+{
+    public const CODE = 'plan_limit_reached';
+    public const MESSAGE = 'Your plan allows up to {limit} projects.';
+    public const STATUS = 402;
+
+    public function __construct(
+        #[Example(5)]
+        public int $limit,
+    ) {}
+}
+```
+
+A marker is a lowercase name in braces, such as `{limit}` or `{plan_name}`, and it must name a public property of the class. Generation fails otherwise, naming the class and the marker. The error body then carries:
+
+- **`template`**: `MESSAGE` verbatim, the source text a client translates. Always present.
+- **`params`**: an object with one property per marker, each documented like any DTO property from the same-named class property, including its type, `#[Description]` and `#[Example]`. Required when `MESSAGE` has markers, and omitted when it has none.
+- **`message`**: the source text with the values filled in. Its example substitutes each marker's `#[Example]` value; a marker without one stays as written.
+
+```json
+"error": {
+  "message": "Your plan allows up to 5 projects.",
+  "code": "plan_limit_reached",
+  "template": "Your plan allows up to {limit} projects.",
+  "params": { "limit": 5 },
+  "details": { "limit": 5 }
+}
+```
+
+Set `error_fields.template` or `error_fields.params` to `null` to leave either out.
 
 Every error response's description carries ``` `code`: MESSAGE ```, e.g. ``` `too_many_requests`: Too many requests. Please try again later. ``` A status with one error shows that single line; a status several errors share shows the same lines under a `Possible errors:` header.
 
@@ -681,6 +719,8 @@ Field names are configurable per documentation set under `errors`, so each app c
     'error_fields' => [
         'message' => 'message',
         'code' => 'code',
+        'template' => 'template',
+        'params' => 'params',
         'details' => 'details',
     ],
 ],

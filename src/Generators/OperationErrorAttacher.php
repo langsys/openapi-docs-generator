@@ -158,11 +158,12 @@ class OperationErrorAttacher
     private function attachToOperation(OA\Operation $operation, OA\PathItem $pathItem, string $method): int
     {
         $path = $pathItem->path === Generator::UNDEFINED ? '' : (string) $pathItem->path;
-        $action = OperationAction::fromOperation($operation);
-        $reflection = OperationAction::reflect($action);
-        $route = $this->resolveRoute($method, $path, $action);
+        $annotatedAction = OperationAction::fromOperation($operation);
+        $annotated = OperationAction::reflect($annotatedAction);
+        $route = $this->resolveRoute($method, $path, $annotatedAction);
+        $action = $this->actionFor($annotated, $annotatedAction, $route);
 
-        $classes = $this->errorClassesFor($operation, $pathItem, $method, $path, $reflection, $route);
+        $classes = $this->errorClassesFor($operation, $pathItem, $method, $path, $annotated, $action, $route);
 
         if ($classes === []) {
             return 0;
@@ -198,8 +199,28 @@ class OperationErrorAttacher
     }
 
     /**
+     * The method that actually handles the operation. Normally the annotated method,
+     * but an @OA annotation can sit on a helper rather than on the route's action; when
+     * the matched route names a different, reflectable controller action, that action
+     * is the one rules and structural checks must inspect.
+     */
+    private function actionFor(?ReflectionMethod $annotated, ?string $annotatedAction, ?ResolvedRoute $route): ?ReflectionMethod
+    {
+        $routeAction = $route?->action();
+
+        if ($routeAction === null || $routeAction === $annotatedAction) {
+            return $annotated;
+        }
+
+        return OperationAction::reflect($routeAction) ?? $annotated;
+    }
+
+    /**
      * Union of the operation's declared and implied error classes, deduplicated,
-     * in a stable order (declared first, then middleware, then structural).
+     * in a stable order (declared first, then middleware, then structural, then rules).
+     *
+     * `#[Throws]` is read from both the annotated method and the route's action, since
+     * authors put it on either; everything else inspects the route's action.
      *
      * @return array<int, string>
      */
@@ -208,10 +229,15 @@ class OperationErrorAttacher
         OA\PathItem $pathItem,
         string $method,
         string $path,
+        ?ReflectionMethod $annotated,
         ?ReflectionMethod $reflection,
         ?ResolvedRoute $route,
     ): array {
-        $classes = $this->declaredErrors($reflection);
+        $classes = $this->declaredErrors($annotated);
+
+        if ($reflection !== null && ($annotated === null || $reflection->getDeclaringClass()->getName() . '@' . $reflection->getName() !== $annotated->getDeclaringClass()->getName() . '@' . $annotated->getName())) {
+            $classes = array_merge($classes, $this->declaredErrors($reflection));
+        }
 
         $context = new OperationContext(
             operation: $operation,

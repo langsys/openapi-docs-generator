@@ -9,7 +9,7 @@ use OpenApi\Annotations as OA;
 /**
  * The shape of an API error response, defined in exactly one place:
  *
- *   { status: false, data: [], error: { message, code, details, ...#[EnvelopeField] properties } }
+ *   { status: false, data: [], error: { message, code, template, params, details, ...#[EnvelopeField] properties } }
  *
  * Response-level names come from `errors.response_fields`, error-object names from
  * `errors.error_fields`; a null name omits that field. The `error` object and its
@@ -35,6 +35,8 @@ final class ErrorEnvelope
     public const DEFAULT_ERROR_FIELDS = [
         'message' => 'message',
         'code' => 'code',
+        'template' => 'template',
+        'params' => 'params',
         'details' => 'details',
     ];
 
@@ -94,17 +96,26 @@ final class ErrorEnvelope
     }
 
     /**
-     * `{Name}Body`, the error object: `message` (the class's MESSAGE as its
-     * example), `code` (an enum of the one code), `details` (a `$ref` to the details
-     * schema, when the class has one), then the class's #[EnvelopeField] properties.
+     * `{Name}Body`, the error object: `message` (MESSAGE with its markers filled from
+     * #[Example] values, as the example), `code` (an enum of the one code), `template`
+     * (MESSAGE verbatim), `params` (one property per MESSAGE marker, omitted when there
+     * are none), `details` (a `$ref` to the details schema, when the class has one),
+     * then the class's #[EnvelopeField] properties.
      *
      * @param  array<int, OA\Property>  $envelopeProperties  Built from #[EnvelopeField] properties.
      * @param  array<int, string>  $envelopeRequired  Names of the non-nullable ones.
+     * @param  array<int, OA\Property>  $paramProperties  Built from the properties MESSAGE's markers name.
+     * @param  string|null  $messageExample  MESSAGE with markers filled in; defaults to MESSAGE.
      *
      * @throws OpenApiDocsException when an envelope property reuses an error-object field name.
      */
-    public function bodySchema(ErrorDefinition $definition, array $envelopeProperties = [], array $envelopeRequired = []): OA\Schema
-    {
+    public function bodySchema(
+        ErrorDefinition $definition,
+        array $envelopeProperties = [],
+        array $envelopeRequired = [],
+        array $paramProperties = [],
+        ?string $messageExample = null,
+    ): OA\Schema {
         $reserved = array_values(array_filter($this->errorFields, static fn (?string $name): bool => $name !== null));
 
         foreach ($envelopeProperties as $property) {
@@ -121,13 +132,17 @@ final class ErrorEnvelope
 
         $properties = [];
         $required = [];
+        $templateName = $this->errorFields['template'];
+        $paramsName = $paramProperties === [] ? null : $this->errorFields['params'];
 
         if ($name = $this->errorFields['message']) {
             $properties[] = new OA\Property([
                 'property' => $name,
                 'type' => 'string',
-                'description' => 'Human-readable error message',
-                'example' => $definition->message,
+                'description' => $templateName !== null && $paramsName !== null
+                    ? 'Human-readable message: `' . $templateName . '` with `' . $paramsName . '` filled in'
+                    : 'Human-readable error message',
+                'example' => $messageExample ?? $definition->message,
             ]);
             $required[] = $name;
         }
@@ -140,6 +155,29 @@ final class ErrorEnvelope
             'example' => $definition->code,
         ]);
         $required[] = $this->codeField();
+
+        if ($templateName !== null) {
+            $properties[] = new OA\Property([
+                'property' => $templateName,
+                'type' => 'string',
+                'description' => $this->errorFields['params'] !== null
+                    ? 'Source text to translate; `{name}` markers are filled from `' . $this->errorFields['params'] . '`.'
+                    : 'Source text to translate.',
+                'example' => $definition->message,
+            ]);
+            $required[] = $templateName;
+        }
+
+        if ($paramsName !== null) {
+            $properties[] = new OA\Property([
+                'property' => $paramsName,
+                'type' => 'object',
+                'description' => 'Values for the `{name}` markers in the message template',
+                'required' => array_map(static fn (OA\Property $param): string => $param->property, $paramProperties),
+                'properties' => array_values($paramProperties),
+            ]);
+            $required[] = $paramsName;
+        }
 
         if ($definition->hasDetails && ($name = $this->errorFields['details'])) {
             $properties[] = new OA\Property([

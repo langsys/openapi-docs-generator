@@ -396,3 +396,66 @@ describe('custom implied error rules', function () {
         new OperationErrorAttacher(impliedErrors: ['rules' => [['nonsense' => true]]]);
     })->throws(OpenApiDocsException::class, 'Unrecognized implied error rule descriptor');
 });
+
+describe('an @OA annotation on a helper method', function () {
+    /** A resolver whose matched route names $routeAction as its controller action. */
+    function helperRouteResolver(?string $routeAction): RouteResolver
+    {
+        return new class($routeAction) implements RouteResolver {
+            public function __construct(private ?string $routeAction) {}
+
+            public function resolve(ResolvableOperation $operation): ?ResolvedRoute
+            {
+                return new ResolvedRoute(new Route(['POST'], 'api/projects', fn () => null), [], $this->routeAction);
+            }
+        };
+    }
+
+    function actionRecorder(): ImpliedErrorRule
+    {
+        return new class implements ImpliedErrorRule {
+            public ?string $seen = null;
+
+            public function errorsFor(OperationContext $context, ?ReflectionMethod $action): array
+            {
+                $this->seen = $action?->getName();
+
+                return [];
+            }
+        };
+    }
+
+    it('inspects the matched route\'s real action for rules and structural checks', function () {
+        $operation = operationFor(attacherController(), 'annotatedHelper');
+        $recorder = actionRecorder();
+
+        (new OperationErrorAttacher(
+            routeResolver: helperRouteResolver(AttacherFixtureController::class . '@store'),
+            impliedErrors: [
+                'validation' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError::class,
+                'rules' => [$recorder],
+            ],
+        ))->attach(docFor($operation), allErrorDefinitions());
+
+        // 402 from #[Throws] on the annotated helper; 422 because store() takes a Data parameter.
+        expect(statusesOf($operation))->toBe(['200', '402', '422'])
+            ->and($recorder->seen)->toBe('store');
+    });
+
+    it('falls back to the annotated method when the route has no controller action', function () {
+        $operation = operationFor(attacherController(), 'annotatedHelper');
+        $recorder = actionRecorder();
+
+        (new OperationErrorAttacher(
+            routeResolver: helperRouteResolver(null),
+            impliedErrors: [
+                'validation' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError::class,
+                'rules' => [$recorder],
+            ],
+        ))->attach(docFor($operation), allErrorDefinitions());
+
+        // The helper takes no Data parameter, so no 422.
+        expect(statusesOf($operation))->toBe(['200', '402'])
+            ->and($recorder->seen)->toBe('annotatedHelper');
+    });
+});

@@ -166,14 +166,19 @@ return [
             ],
 
             // Field names inside the error object. null omits a field; `code` cannot be null.
-            //   message -> string, the class's MESSAGE as example
-            //   code    -> string enum of the single code
-            //   details -> $ref to the `{Name}` details schema (omitted when the
-            //              class has no non-#[EnvelopeField] properties)
+            //   message  -> string, MESSAGE with {marker}s filled from #[Example] values as example
+            //   code     -> string enum of the single code
+            //   template -> string, MESSAGE verbatim: the source text a client translates
+            //   params   -> object with one property per {marker} in MESSAGE, built from the
+            //               same-named public property (omitted when MESSAGE has no markers)
+            //   details  -> $ref to the `{Name}` details schema (omitted when the
+            //               class has no non-#[EnvelopeField] properties)
             // Properties marked #[EnvelopeField] follow at the top level of the error object.
             'error_fields' => [
                 'message' => 'message',
                 'code' => 'code',
+                'template' => 'template',
+                'params' => 'params',
                 'details' => 'details',
             ],
         ],

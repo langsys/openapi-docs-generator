@@ -53,4 +53,13 @@ class AttacherFixtureController
     {
         FakeGuard::authorize('view_things');
     }
+
+    /**
+     * Stands in for a helper carrying the @OA annotation while the route's real action
+     * is store(). Its own #[Throws] still counts.
+     */
+    #[Throws(InsufficientBalanceError::class)]
+    public function annotatedHelper(): void
+    {
+    }
 }

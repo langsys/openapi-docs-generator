@@ -29,6 +29,8 @@ final class ErrorDefinition
         public readonly int $status,
         /** Whether the class has non-envelope properties (i.e. a details schema exists). */
         public readonly bool $hasDetails,
+        /** @var array<int, string> The `{marker}` names in MESSAGE, in order of first appearance. */
+        public readonly array $markers = [],
     ) {
     }
 

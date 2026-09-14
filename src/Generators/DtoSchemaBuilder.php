@@ -1114,7 +1114,7 @@ class DtoSchemaBuilder
     private function buildErrorSchemas(string $className): array
     {
         $reflection = new ReflectionClass($className);
-        ['code' => $code, 'message' => $message, 'status' => $status] = $this->errorContract->read($reflection);
+        ['code' => $code, 'message' => $message, 'status' => $status, 'markers' => $markers] = $this->errorContract->read($reflection);
 
         foreach ($this->errorDefinitions as $existing) {
             if ($existing->code === $code) {
@@ -1139,6 +1139,7 @@ class DtoSchemaBuilder
             message: $message,
             status: $status,
             hasDetails: $detailsSchema !== null,
+            markers: $markers,
         );
         $this->errorDefinitions[$className] = $definition;
 
@@ -1153,8 +1154,11 @@ class DtoSchemaBuilder
     }
 
     /**
-     * Build the `{Name}Body` error object: the envelope's standard fields plus the
-     * class's #[EnvelopeField] properties (see ErrorEnvelope::bodySchema()).
+     * Build the `{Name}Body` error object: the envelope's standard fields, the
+     * class's #[EnvelopeField] properties, and one `params` property per MESSAGE
+     * marker, built from the same-named public property like any DTO property. The
+     * message example fills each marker that has an #[Example] value
+     * (see ErrorEnvelope::bodySchema()).
      */
     private function buildErrorBodySchema(ReflectionClass $reflection, ErrorDefinition $definition): OA\Schema
     {
@@ -1173,7 +1177,32 @@ class DtoSchemaBuilder
             }
         }
 
-        return $this->errorEnvelope->bodySchema($definition, $properties, $required);
+        $paramProperties = [];
+        $messageExample = $definition->message;
+
+        foreach ($definition->markers as $marker) {
+            $meta = $this->extractPropertyMetadata($reflection->getProperty($marker));
+            $param = $this->buildProperty($meta);
+            $paramProperties[] = $param;
+
+            if ($meta->example !== null && $param->example !== OpenApiGenerator::UNDEFINED) {
+                $messageExample = str_replace('{' . $marker . '}', $this->exampleToText($param->example), $messageExample);
+            }
+        }
+
+        return $this->errorEnvelope->bodySchema($definition, $properties, $required, $paramProperties, $messageExample);
+    }
+
+    /**
+     * An example value as it would read inside a filled-in message.
+     */
+    private function exampleToText(mixed $value): string
+    {
+        return match (true) {
+            is_bool($value) => $value ? 'true' : 'false',
+            is_scalar($value) => (string) $value,
+            default => (string) json_encode($value),
+        };
     }
 
     /**
