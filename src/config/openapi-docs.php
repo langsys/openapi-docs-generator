@@ -220,6 +220,15 @@ return [
             // instance.
             // e.g. ['class' => \App\Docs\AuthorizesRule::class, 'args' => [...]]
             'rules' => [],
+
+            // Resolvers that list the field-level validation failures an endpoint can
+            // return, so its validation response documents the actual outcomes instead
+            // of one flat message. Each implements Contracts\ValidationScenarioResolver
+            // and returns Data\ValidationScenario objects (a nullable field, a code and
+            // a message). Same descriptor forms as `rules`. Requires `validation` above,
+            // since the scenarios are listed on that error's response.
+            // e.g. \App\Docs\FieldErrorScenarios::class
+            'validation_scenarios' => [],
         ],
 
         // --- Output Paths ---

@@ -27,6 +27,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [The Error Class Contract](#the-error-class-contract)
   - [The Error Response](#the-error-response)
   - [Attaching Errors to Operations](#attaching-errors-to-operations)
+  - [Validation Scenarios](#validation-scenarios)
 - [Example Generation (Faker)](#example-generation-faker)
 - [Artisan Commands](#artisan-commands)
 - [Configuration Reference](#configuration-reference)
@@ -809,6 +810,58 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. |
 
 A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]`, `implied_errors` or a rule names a class that is not a documented error: not a concrete subclass of `errors.base_class`, or never scanned. The message says which.
+
+### Validation Scenarios
+
+`implied_errors.validation` gives an operation one error for its validation status, so every endpoint reads the same flat message. If your app knows which field can fail and why, a resolver can put that in the docs:
+
+```php
+use Langsys\OpenApiDocsGenerator\Contracts\ValidationScenarioResolver;
+use Langsys\OpenApiDocsGenerator\Data\OperationContext;
+use Langsys\OpenApiDocsGenerator\Data\ValidationScenario;
+use ReflectionMethod;
+
+class FieldErrorScenarios implements ValidationScenarioResolver
+{
+    public function errorsFor(): array { /* … */ }
+
+    public function scenariosFor(OperationContext $context, ?ReflectionMethod $action): array
+    {
+        // Walk the action's request rules, however your app defines them.
+        return [
+            new ValidationScenario('credit_card.cc_number', 'already_taken', 'This credit card has already been added.'),
+            // One code, two rules, two sentences: both are listed.
+            new ValidationScenario('locale', 'invalid_option', 'The locale is not valid.'),
+            new ValidationScenario('locale', 'invalid_option', 'The locale is not a target locale of this project.'),
+            // A rule that judges something outside the payload belongs to no field: pass null.
+            new ValidationScenario(null, 'expired', 'This invitation has expired.'),
+        ];
+    }
+}
+
+// 'implied_errors' => ['validation_scenarios' => FieldErrorScenarios::class],
+```
+
+Descriptors accept a class name, `['class' => …, 'args' => […]]`, an instance, or a list of those, exactly like `rules`.
+
+An operation with scenarios gets an inline validation response instead of the shared `$ref`, keeping the same `{Name}Response` schema and listing the scenarios in its description:
+
+```
+`validation_failed`: The request failed validation.
+
+Possible validation errors:
+
+- `credit_card.cc_number`.`already_taken`: This credit card has already been added.
+- `locale`.`invalid_option`: The locale is not valid.
+- `locale`.`invalid_option`: The locale is not a target locale of this project.
+- `expired`: This invitation has expired.
+```
+
+- Identical scenarios are dropped, but one code carrying different messages is kept: several rules legitimately share a code, and the message is what a reader acts on. Order is preserved.
+- A status shared by several errors keeps its `oneOf` and gains the same block.
+- A hand-written response for that status still wins and gets nothing attached.
+- An operation whose resolver returns nothing is documented exactly as before, and so is every endpoint when no resolver is configured.
+- `implied_errors.validation` must be set, since the scenarios are listed on that error's response. Returning scenarios without it fails generation, naming the operation.
 
 ## Example Generation (Faker)
 

@@ -9,6 +9,7 @@ use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OpenApiGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\OperationErrorAttacher;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\FixedScenarioResolver;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError;
 use Psr\Log\NullLogger;
@@ -224,4 +225,36 @@ test('single-error and shared-status responses describe errors in the same `code
         . "- `batch_too_large`: The submitted batch has more items than the endpoint allows.\n"
         . '- `validation_failed`: One or more request fields failed validation.'
     );
+});
+
+test('validation scenarios are listed on the operation that has them, leaving other endpoints alone', function () {
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile, [
+        'validation' => \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError::class,
+        'validation_scenarios' => FixedScenarioResolver::class,
+    ]);
+
+    // POST /api/projects takes a Data parameter, so it gets the validation response.
+    $validation = $doc['paths']['/api/projects']['post']['responses']['422'];
+
+    expect($validation)->not->toHaveKey('$ref')
+        ->and($validation['content']['application/json']['schema']['$ref'])->toBe('#/components/schemas/ValidationErrorResponse')
+        ->and($validation['description'])->toContain('`validation_failed`: One or more request fields failed validation.')
+        ->and($validation['description'])->toContain("Possible validation errors:\n\n- `credit_card.cc_number`.`already_taken`: This credit card has already been added.")
+        ->and($validation['description'])->toContain('- `expired`: This invitation has expired.')
+        // One code, two rules, two sentences: both are listed.
+        ->and($validation['description'])->toContain('- `locale`.`invalid_option`: The locale is not valid.')
+        ->and($validation['description'])->toContain('- `locale`.`invalid_option`: The locale is not a target locale of this project.');
+
+    // The envelope schemas the inline response references are still emitted.
+    expect($doc['components']['schemas'])->toHaveKeys(['ValidationErrorResponse', 'ValidationErrorBody'])
+        ->and($doc['components']['schemas']['ErrorCode']['enum'])->toContain('validation_failed');
+
+    // Reporting scenarios implies the validation error, even where the Data-parameter rule
+    // wouldn't: /api/purchase takes no Data parameter, and this stub reports scenarios for
+    // every operation. A real resolver returns [] for an endpoint it knows nothing about,
+    // which is covered by the unit tests.
+    $purchase = $doc['paths']['/api/purchase']['post']['responses']['422'];
+
+    expect($purchase['description'])->toContain('Possible validation errors:')
+        ->and($purchase['content']['application/json']['schema']['$ref'])->toBe('#/components/schemas/ValidationErrorResponse');
 });

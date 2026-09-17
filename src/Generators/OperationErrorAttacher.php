@@ -6,10 +6,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Routing\Router;
 use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
+use Langsys\OpenApiDocsGenerator\Contracts\ValidationScenarioResolver;
 use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Data\OperationContext;
 use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
+use Langsys\OpenApiDocsGenerator\Data\ValidationScenario;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Filters\MiddlewareFilter;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Throws;
@@ -68,6 +70,9 @@ class OperationErrorAttacher
     /** @var array<int, ImpliedErrorRule> */
     private array $rules;
 
+    /** @var array<int, ValidationScenarioResolver> */
+    private array $scenarioResolvers;
+
     /** Set per attach() pass: the shape the referenced error schemas were built with. */
     private ErrorEnvelope $envelope;
 
@@ -105,6 +110,7 @@ class OperationErrorAttacher
         $this->notFoundErrors = array_values((array) ($impliedErrors['not_found'] ?? []));
         $this->notFoundBinding = (string) ($impliedErrors['not_found_binding'] ?? 'model');
         $this->rules = (new ImpliedErrorRuleFactory())->makeMany((array) ($impliedErrors['rules'] ?? []));
+        $this->scenarioResolvers = (new ValidationScenarioResolverFactory())->makeMany($impliedErrors['validation_scenarios'] ?? []);
     }
 
     /**
@@ -163,10 +169,36 @@ class OperationErrorAttacher
         $route = $this->resolveRoute($method, $path, $annotatedAction);
         $action = $this->actionFor($annotated, $annotatedAction, $route);
 
-        $classes = $this->errorClassesFor($operation, $pathItem, $method, $path, $annotated, $action, $route);
+        $context = new OperationContext(
+            operation: $operation,
+            pathItem: $pathItem,
+            httpMethod: $method,
+            path: $path,
+            route: $route,
+        );
+
+        $classes = $this->errorClassesFor($context, $annotated, $action);
+        $scenarios = $this->scenariosFor($context, $action);
+
+        if ($scenarios !== []) {
+            if ($this->validationErrors === []) {
+                throw new OpenApiDocsException(sprintf(
+                    'A validation scenario resolver returned scenarios for %s, but no implied_errors.validation '
+                    . 'error class is configured to attach them to.',
+                    strtoupper($method) . ' ' . $path,
+                ));
+            }
+
+            $classes = array_values(array_unique(array_merge($classes, $this->validationErrors)));
+        }
 
         if ($classes === []) {
             return 0;
+        }
+
+        $scenarioStatuses = [];
+        foreach ($scenarios === [] ? [] : $this->validationErrors as $validationClass) {
+            $scenarioStatuses[$this->definitionFor($validationClass, $method, $path)->status] = true;
         }
 
         $byStatus = [];
@@ -191,7 +223,11 @@ class OperationErrorAttacher
                 $operation->responses = [];
             }
 
-            $operation->responses[] = $this->buildResponse($status, array_values($definitions));
+            $operation->responses[] = $this->buildResponse(
+                $status,
+                array_values($definitions),
+                isset($scenarioStatuses[$status]) ? $scenarios : [],
+            );
             $added++;
         }
 
@@ -224,30 +260,15 @@ class OperationErrorAttacher
      *
      * @return array<int, string>
      */
-    private function errorClassesFor(
-        OA\Operation $operation,
-        OA\PathItem $pathItem,
-        string $method,
-        string $path,
-        ?ReflectionMethod $annotated,
-        ?ReflectionMethod $reflection,
-        ?ResolvedRoute $route,
-    ): array {
+    private function errorClassesFor(OperationContext $context, ?ReflectionMethod $annotated, ?ReflectionMethod $reflection): array
+    {
         $classes = $this->declaredErrors($annotated);
 
-        if ($reflection !== null && ($annotated === null || $reflection->getDeclaringClass()->getName() . '@' . $reflection->getName() !== $annotated->getDeclaringClass()->getName() . '@' . $annotated->getName())) {
+        if ($reflection !== null && ($annotated === null || $this->actionName($reflection) !== $this->actionName($annotated))) {
             $classes = array_merge($classes, $this->declaredErrors($reflection));
         }
 
-        $context = new OperationContext(
-            operation: $operation,
-            pathItem: $pathItem,
-            httpMethod: $method,
-            path: $path,
-            route: $route,
-        );
-
-        if ($route !== null) {
+        if ($context->route !== null) {
             foreach ($this->middlewareRules as $rule) {
                 if ($rule['filter']->matches($context)) {
                     $classes = array_merge($classes, $rule['classes']);
@@ -259,7 +280,7 @@ class OperationErrorAttacher
             $classes = array_merge($classes, $this->validationErrors);
         }
 
-        if ($this->notFoundErrors !== [] && $this->hasBoundParameter($route, $reflection)) {
+        if ($this->notFoundErrors !== [] && $this->hasBoundParameter($context->route, $reflection)) {
             $classes = array_merge($classes, $this->notFoundErrors);
         }
 
@@ -268,6 +289,48 @@ class OperationErrorAttacher
         }
 
         return array_values(array_unique($classes));
+    }
+
+    private function actionName(ReflectionMethod $method): string
+    {
+        return $method->getDeclaringClass()->getName() . '@' . $method->getName();
+    }
+
+    /**
+     * The validation failures every configured resolver reports for this operation,
+     * deduplicated on the exact field/code/message triple, first occurrence winning.
+     * Not on field plus code: several rules legitimately share one code with different
+     * messages (an `invalid_option` that is "not a target locale" in one rule and "not
+     * supported" in another), and keying on the code alone would show only one of them.
+     *
+     * @return array<int, ValidationScenario>
+     *
+     * @throws OpenApiDocsException when a resolver returns something else.
+     */
+    private function scenariosFor(OperationContext $context, ?ReflectionMethod $action): array
+    {
+        $scenarios = [];
+
+        foreach ($this->scenarioResolvers as $resolver) {
+            foreach ($resolver->scenariosFor($context, $action) as $scenario) {
+                if (! $scenario instanceof ValidationScenario) {
+                    throw new OpenApiDocsException(sprintf(
+                        '%s::scenariosFor() must return %s instances; got %s.',
+                        $resolver::class,
+                        ValidationScenario::class,
+                        get_debug_type($scenario),
+                    ));
+                }
+
+                $key = ($scenario->field ?? '') . "\0" . $scenario->code . "\0" . $scenario->message;
+
+                if (! isset($scenarios[$key])) {
+                    $scenarios[$key] = $scenario;
+                }
+            }
+        }
+
+        return array_values($scenarios);
     }
 
     /**
@@ -476,30 +539,52 @@ class OperationErrorAttacher
      * inline response whose `error` property is a `oneOf` of their error bodies,
      * discriminated on `code` (see ErrorEnvelope::sharedStatusSchema()).
      *
+     * Validation scenarios turn even a single-error response inline, because the
+     * `$ref` points at a component every endpoint shares: the schema stays the
+     * error's `{Name}Response` and the scenarios are listed in the description.
+     *
      * @param  array<int, ErrorDefinition>  $definitions
+     * @param  array<int, ValidationScenario>  $scenarios
      */
-    private function buildResponse(int $status, array $definitions): OA\Response
+    private function buildResponse(int $status, array $definitions, array $scenarios = []): OA\Response
     {
-        if (count($definitions) === 1) {
+        if (count($definitions) === 1 && $scenarios === []) {
             return new OA\Response([
                 'response' => $status,
                 'ref' => '#/components/responses/' . $definitions[0]->schemaName,
             ]);
         }
 
-        $lines = [];
+        if (count($definitions) === 1) {
+            $description = $definitions[0]->codeAndMessage();
+            $schema = new OA\Schema(['ref' => '#/components/schemas/' . $definitions[0]->responseSchemaName]);
+        } else {
+            $lines = [];
 
-        foreach ($definitions as $definition) {
-            $lines[] = '- ' . $definition->codeAndMessage();
+            foreach ($definitions as $definition) {
+                $lines[] = '- ' . $definition->codeAndMessage();
+            }
+
+            $description = "Possible errors:\n\n" . implode("\n", $lines);
+            $schema = $this->envelope->sharedStatusSchema($definitions);
+        }
+
+        if ($scenarios !== []) {
+            $scenarioLines = array_map(
+                static fn (ValidationScenario $scenario): string => '- ' . $scenario->describe(),
+                $scenarios,
+            );
+
+            $description .= "\n\nPossible validation errors:\n\n" . implode("\n", $scenarioLines);
         }
 
         return new OA\Response([
             'response' => $status,
-            'description' => "Possible errors:\n\n" . implode("\n", $lines),
+            'description' => $description,
             'content' => [
                 new OA\MediaType([
                     'mediaType' => 'application/json',
-                    'schema' => $this->envelope->sharedStatusSchema($definitions),
+                    'schema' => $schema,
                 ]),
             ],
         ]);

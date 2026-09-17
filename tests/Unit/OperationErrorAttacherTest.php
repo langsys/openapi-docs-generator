@@ -5,6 +5,7 @@ use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
 use Langsys\OpenApiDocsGenerator\Data\OperationContext;
 use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
+use Langsys\OpenApiDocsGenerator\Data\ValidationScenario;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
@@ -14,6 +15,7 @@ use Langsys\OpenApiDocsGenerator\Generators\OperationErrorAttacher;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\UnauthenticatedError as ForbiddenStandIn;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\AttacherFixtureController;
+use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\FixedScenarioResolver;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\NoopRule;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\SourceScanRule;
 use Langsys\OpenApiDocsGenerator\Tests\ErrorOperationFixtures\ClassThrowsController;
@@ -457,5 +459,176 @@ describe('an @OA annotation on a helper method', function () {
         // The helper takes no Data parameter, so no 422.
         expect(statusesOf($operation))->toBe(['200', '402'])
             ->and($recorder->seen)->toBe('annotatedHelper');
+    });
+});
+
+describe('validation scenarios', function () {
+    function validationClass(): string
+    {
+        return \Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ValidationError::class;
+    }
+
+    /** An operation whose action takes a Data parameter, so validation is implied. */
+    function scenarioOperation(): OA\Get
+    {
+        return operationFor(attacherController(), 'store');
+    }
+
+    it('lists the scenarios on an inline validation response instead of the shared $ref', function () {
+        $operation = scenarioOperation();
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => FixedScenarioResolver::class,
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        $response = attachedResponses($operation)['422'];
+
+        expect($response)->not->toHaveKey('$ref')
+            ->and($response['content']['application/json']['schema']['$ref'])->toBe('#/components/schemas/ValidationErrorResponse')
+            ->and($response['description'])->toBe(
+                "`validation_failed`: One or more request fields failed validation.\n\n"
+                . "Possible validation errors:\n\n"
+                . "- `credit_card.cc_number`.`already_taken`: This credit card has already been added.\n"
+                . "- `locale`.`invalid_option`: The locale is not valid.\n"
+                . "- `locale`.`invalid_option`: The locale is not a target locale of this project.\n"
+                . '- `expired`: This invitation has expired.'
+            );
+    });
+
+    it('leaves the response as a $ref when the resolver returns nothing', function () {
+        $operation = scenarioOperation();
+        $empty = new class implements \Langsys\OpenApiDocsGenerator\Contracts\ValidationScenarioResolver {
+            public function scenariosFor(OperationContext $context, ?ReflectionMethod $action): array
+            {
+                return [];
+            }
+        };
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => [$empty],
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        expect(attachedResponses($operation)['422'])->toBe(['$ref' => '#/components/responses/ValidationError']);
+    });
+
+    it('drops exact duplicates but keeps one code carrying different messages', function () {
+        $operation = scenarioOperation();
+        $resolver = new FixedScenarioResolver(
+            new ValidationScenario('locale', 'invalid_option', 'The locale is not valid.'),
+            new ValidationScenario('locale', 'invalid_option', 'The locale is not valid.'),
+            new ValidationScenario('locale', 'invalid_option', 'The locale is not a target locale of this project.'),
+            new ValidationScenario(null, 'not_allowed', 'Wire transfer is only available for Enterprise plans.'),
+            new ValidationScenario(null, 'not_allowed', 'This plan has no fixed price. Please use wire transfer.'),
+        );
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => $resolver,
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        $lines = array_values(array_filter(
+            explode("\n", attachedResponses($operation)['422']['description']),
+            static fn (string $line): bool => str_starts_with($line, '- '),
+        ));
+
+        // The repeat is gone; the same code with a different message survives, because
+        // several rules legitimately share a code.
+        expect($lines)->toBe([
+            '- `locale`.`invalid_option`: The locale is not valid.',
+            '- `locale`.`invalid_option`: The locale is not a target locale of this project.',
+            '- `not_allowed`: Wire transfer is only available for Enterprise plans.',
+            '- `not_allowed`: This plan has no fixed price. Please use wire transfer.',
+        ]);
+    });
+
+    it('keeps the oneOf and adds the scenarios when the status is shared', function () {
+        $operation = operationFor(attacherController(), 'sharedStatus');
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => FixedScenarioResolver::class,
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        $response = attachedResponses($operation)['422'];
+
+        expect($response['content']['application/json']['schema']['properties']['error'])->toHaveKey('oneOf')
+            ->and($response['description'])->toContain('Possible errors:')
+            ->and($response['description'])->toContain('- `batch_too_large`:')
+            ->and($response['description'])->toContain("Possible validation errors:\n\n- `credit_card.cc_number`.`already_taken`:");
+    });
+
+    it('leaves a hand-written validation response untouched', function () {
+        $operation = operationFor(attacherController(), 'store', [
+            new OA\Response(['response' => '200', 'description' => 'OK']),
+            new OA\Response(['response' => '422', 'description' => 'Hand-written validation']),
+        ]);
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => FixedScenarioResolver::class,
+        ]))->attach(docFor($operation), allErrorDefinitions());
+
+        expect(attachedResponses($operation)['422']['description'])->toBe('Hand-written validation');
+    });
+
+    it('fails when scenarios are returned but no validation error class is configured', function () {
+        $operation = scenarioOperation();
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation_scenarios' => FixedScenarioResolver::class,
+        ]))->attach(docFor($operation), allErrorDefinitions());
+    })->throws(OpenApiDocsException::class, 'no implied_errors.validation error class is configured');
+
+    it('rejects a resolver that returns something other than scenarios', function () {
+        $operation = scenarioOperation();
+        $wrong = new class implements \Langsys\OpenApiDocsGenerator\Contracts\ValidationScenarioResolver {
+            public function scenariosFor(OperationContext $context, ?ReflectionMethod $action): array
+            {
+                return [['field' => 'cc_number', 'code' => 'already_taken', 'message' => 'Nope']];
+            }
+        };
+
+        (new OperationErrorAttacher(impliedErrors: [
+            'validation' => validationClass(),
+            'validation_scenarios' => [$wrong],
+        ]))->attach(docFor($operation), allErrorDefinitions());
+    })->throws(OpenApiDocsException::class, 'must return Langsys\OpenApiDocsGenerator\Data\ValidationScenario instances; got array');
+
+    it('accepts a resolver as a class name, a class-and-args descriptor, or an instance', function () {
+        $configs = [
+            FixedScenarioResolver::class,
+            ['class' => FixedScenarioResolver::class, 'args' => [new ValidationScenario('email', 'taken', 'That email is taken.')]],
+            new FixedScenarioResolver(new ValidationScenario('email', 'taken', 'That email is taken.')),
+        ];
+
+        foreach ($configs as $config) {
+            $operation = scenarioOperation();
+
+            (new OperationErrorAttacher(impliedErrors: [
+                'validation' => validationClass(),
+                'validation_scenarios' => $config,
+            ]))->attach(docFor($operation), allErrorDefinitions());
+
+            expect(attachedResponses($operation)['422']['description'])->toContain('Possible validation errors:');
+        }
+    });
+
+    it('rejects a resolver class that does not exist or does not implement the contract', function () {
+        expect(fn () => new OperationErrorAttacher(impliedErrors: ['validation_scenarios' => 'App\\Nope\\Resolver']))
+            ->toThrow(OpenApiDocsException::class, 'Validation scenario resolver class does not exist');
+
+        expect(fn () => new OperationErrorAttacher(impliedErrors: ['validation_scenarios' => attacherController()]))
+            ->toThrow(OpenApiDocsException::class, 'must implement');
+
+        expect(fn () => new OperationErrorAttacher(impliedErrors: ['validation_scenarios' => [['nonsense' => true]]]))
+            ->toThrow(OpenApiDocsException::class, 'Unrecognized validation scenario resolver descriptor');
+    });
+
+    it('rejects an empty code, message or field on a scenario', function () {
+        expect(fn () => new ValidationScenario('f', '', 'm'))->toThrow(OpenApiDocsException::class, 'non-empty code')
+            ->and(fn () => new ValidationScenario('f', 'c', ''))->toThrow(OpenApiDocsException::class, 'non-empty message')
+            ->and(fn () => new ValidationScenario('', 'c', 'm'))->toThrow(OpenApiDocsException::class, 'pass null when the rule validates the whole payload');
     });
 });
