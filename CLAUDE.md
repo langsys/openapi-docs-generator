@@ -141,7 +141,7 @@ class BreakerNotFoundError extends NotFoundError  // a specific failure mode
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (267 tests, 763 assertions).
+Tests use Pest with Orchestra Testbench (278 tests, 804 assertions).
 
 | Test File | What It Covers |
 |---|---|
