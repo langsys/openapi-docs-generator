@@ -94,6 +94,21 @@ function attacherRouteResolver(string $uri, array $middleware = []): RouteResolv
     };
 }
 
+/** A document whose components carry the error schemas, as the real pipeline has them. */
+function docWithErrorSchemas(OA\Get $operation, string $path = '/api/things'): OA\OpenApi
+{
+    $openapi = docFor($operation, $path);
+    $builder = new DtoSchemaBuilder(
+        [dirname(__DIR__) . '/ErrorFixtures', dirname(__DIR__) . '/ErrorOperationFixtures'],
+        new ExampleGenerator([], []),
+        [],
+        ['base_class' => ApiError::class],
+    );
+    $openapi->components = new OA\Components(['schemas' => $builder->buildAll()]);
+
+    return $openapi;
+}
+
 /** @return array<string, array> status => decoded response */
 function attachedResponses(OA\Get $operation): array
 {
@@ -630,5 +645,95 @@ describe('validation scenarios', function () {
         expect(fn () => new ValidationScenario('f', '', 'm'))->toThrow(OpenApiDocsException::class, 'non-empty code')
             ->and(fn () => new ValidationScenario('f', 'c', ''))->toThrow(OpenApiDocsException::class, 'non-empty message')
             ->and(fn () => new ValidationScenario('', 'c', 'm'))->toThrow(OpenApiDocsException::class, 'pass null when the rule validates the whole payload');
+    });
+});
+
+describe('shared-status examples', function () {
+    it('gives a shared status one named example per error, in the listed order', function () {
+        $operation = operationFor(attacherController(), 'sharedStatus');
+
+        (new OperationErrorAttacher())->attach(docWithErrorSchemas($operation), allErrorDefinitions());
+
+        $examples = attachedResponses($operation)['422']['content']['application/json']['examples'];
+
+        // Keyed by code, ordered as the "Possible errors" lines above them.
+        expect(array_keys($examples))->toBe(['batch_too_large', 'validation_failed'])
+            ->and($examples['batch_too_large']['summary'])->toBe('batch_too_large')
+            ->and($examples['validation_failed']['summary'])->toBe('validation_failed');
+
+        // Each example says which error it is, in the notation the description list uses.
+        expect($examples['batch_too_large']['description'])
+            ->toBe('`batch_too_large`: The submitted batch has more items than the endpoint allows.')
+            ->and($examples['validation_failed']['description'])
+            ->toBe('`validation_failed`: One or more request fields failed validation.');
+
+        $value = $examples['batch_too_large']['value'];
+
+        // A whole response body, not just the error object.
+        expect(array_keys($value))->toBe(['status', 'data', 'error'])
+            ->and($value['status'])->toBeFalse()
+            ->and($value['data'])->toBe([]);
+
+        // Built from what the Body schema already advertises, including typed details.
+        expect($value['error']['code'])->toBe('batch_too_large')
+            ->and($value['error']['message'])->toBe('The submitted batch has more items than the endpoint allows.')
+            ->and($value['error']['template'])->toBe('The submitted batch has more items than the endpoint allows.')
+            ->and(array_keys($value['error']['details']))->toBe(['max', 'submitted']);
+    });
+
+    it('leaves an app-owned envelope field out of the example rather than inventing it', function () {
+        $operation = operationFor(attacherController(), 'sharedStatus');
+
+        (new OperationErrorAttacher())->attach(docWithErrorSchemas($operation), allErrorDefinitions());
+
+        $error = attachedResponses($operation)['422']['content']['application/json']['examples']['validation_failed']['value']['error'];
+
+        // ValidationError's `errors` map is an #[EnvelopeField] with no example of its own.
+        expect(array_keys($error))->toBe(['message', 'code', 'template'])
+            ->and($error)->not->toHaveKey('errors');
+    });
+
+    it('falls back to what the definition knows when the Body schema is absent', function () {
+        $operation = operationFor(attacherController(), 'sharedStatus');
+
+        (new OperationErrorAttacher())->attach(docFor($operation), allErrorDefinitions());
+
+        $error = attachedResponses($operation)['422']['content']['application/json']['examples']['batch_too_large']['value']['error'];
+
+        expect($error)->toBe([
+            'message' => 'The submitted batch has more items than the endpoint allows.',
+            'code' => 'batch_too_large',
+            'template' => 'The submitted batch has more items than the endpoint allows.',
+        ]);
+    });
+
+    it('gives an array detail a one-item list from its items example', function () {
+        $operation = operationFor(attacherController(), 'arrayDetails');
+
+        (new OperationErrorAttacher())->attach(docWithErrorSchemas($operation), allErrorDefinitions());
+
+        $examples = attachedResponses($operation)['422']['content']['application/json']['examples'];
+
+        expect(array_keys($examples))->toBe(['account_owns_organizations', 'validation_failed'])
+            ->and($examples['account_owns_organizations']['value']['error']['details'])
+            ->toBe(['owned_organization_ids' => ['5b0e9c1f']]);
+    });
+
+    it('adds no examples to a single-error response', function () {
+        $operation = operationFor(attacherController(), 'single');
+
+        (new OperationErrorAttacher())->attach(docWithErrorSchemas($operation), allErrorDefinitions());
+
+        expect(attachedResponses($operation)['402'])->toBe(['$ref' => '#/components/responses/InsufficientBalanceError']);
+    });
+
+    it('labels the error wrapper as one of the errors listed above', function () {
+        $operation = operationFor(attacherController(), 'sharedStatus');
+
+        (new OperationErrorAttacher())->attach(docWithErrorSchemas($operation), allErrorDefinitions());
+
+        $error = attachedResponses($operation)['422']['content']['application/json']['schema']['properties']['error'];
+
+        expect($error['description'])->toBe('One of the errors listed above; `code` says which');
     });
 });

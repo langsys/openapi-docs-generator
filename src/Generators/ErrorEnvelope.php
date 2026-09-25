@@ -232,13 +232,60 @@ final class ErrorEnvelope
 
         return new OA\Schema($this->envelope(new OA\Property([
             'property' => $this->errorField(),
-            'description' => 'Error detail; `' . $this->codeField() . '` identifies which error it is',
+            'description' => 'One of the errors listed above; `' . $this->codeField() . '` says which',
             'oneOf' => $variants,
             'discriminator' => new OA\Discriminator([
                 'propertyName' => $this->codeField(),
                 'mapping' => $mapping,
             ]),
         ])));
+    }
+
+    /**
+     * A whole response body for one error, as an example value: the envelope's own
+     * fields around the given error object, under the configured names.
+     *
+     * @param  array<string, mixed>  $errorObject
+     * @return array<string, mixed>
+     */
+    public function exampleEnvelope(array $errorObject): array
+    {
+        $body = [];
+
+        if ($name = $this->responseFields['status']) {
+            $body[$name] = false;
+        }
+
+        if ($name = $this->responseFields['data']) {
+            $body[$name] = [];
+        }
+
+        $body[$this->errorField()] = $errorObject;
+
+        return $body;
+    }
+
+    /**
+     * The error object for an example when its `{Name}Body` schema isn't available:
+     * what the definition itself knows, under the configured names.
+     *
+     * @return array<string, mixed>
+     */
+    public function exampleErrorObject(ErrorDefinition $definition): array
+    {
+        $object = [];
+
+        if ($name = $this->errorFields['message']) {
+            $object[$name] = $definition->message;
+        }
+
+        $object[$this->codeField()] = $definition->code;
+
+        if ($name = $this->errorFields['template']) {
+            $object[$name] = $definition->message;
+        }
+
+        return $object;
     }
 
     /**

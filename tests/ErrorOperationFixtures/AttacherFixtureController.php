@@ -62,4 +62,10 @@ class AttacherFixtureController
     public function annotatedHelper(): void
     {
     }
+
+    /** Two errors share 422, and one of them details an array. */
+    #[Throws(AccountOwnsOrganizationsError::class, ValidationError::class)]
+    public function arrayDetails(): void
+    {
+    }
 }

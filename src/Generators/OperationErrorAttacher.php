@@ -79,6 +79,9 @@ class OperationErrorAttacher
     /** Set per attach() pass: the contract, for precise messages about undocumented classes. */
     private ?ErrorContract $contract = null;
 
+    /** Set per attach() pass: serialized component schemas by name, for building example bodies. */
+    private array $schemaIndex = [];
+
     /**
      * @param  RouteResolver|null  $routeResolver  Needed for middleware and not-found rules;
      *                                             without it only `#[Throws]` and the
@@ -135,6 +138,8 @@ class OperationErrorAttacher
         foreach ($errorDefinitions as $definition) {
             $this->definitions[$definition->className] = $definition;
         }
+
+        $this->schemaIndex = $this->indexSchemas($openapi);
 
         if ($openapi->paths === Generator::UNDEFINED || ! is_array($openapi->paths)) {
             return 0;
@@ -232,6 +237,119 @@ class OperationErrorAttacher
         }
 
         return $added;
+    }
+
+    /**
+     * Serialize the document's component schemas by name, so an example body can be
+     * built from the examples those schemas already advertise.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexSchemas(OA\OpenApi $openapi): array
+    {
+        if ($openapi->components === Generator::UNDEFINED
+            || $openapi->components->schemas === Generator::UNDEFINED
+            || ! is_array($openapi->components->schemas)) {
+            return [];
+        }
+
+        $index = [];
+
+        foreach ($openapi->components->schemas as $schema) {
+            $name = $schema->schema ?? Generator::UNDEFINED;
+
+            if (is_string($name) && $name !== '' && $name !== Generator::UNDEFINED) {
+                $index[$name] = json_decode(json_encode($schema), true);
+            }
+        }
+
+        return $index;
+    }
+
+    /**
+     * An example error object for one error, taken from the examples its `{Name}Body`
+     * schema already advertises: the filled message, the code, the template, its params
+     * and its typed details. A property with no example of its own is left out rather
+     * than invented, so an app-owned envelope field (a validation `errors` map, say)
+     * never appears with made-up content.
+     *
+     * @return array<string, mixed>
+     */
+    private function errorObjectExample(ErrorDefinition $definition): array
+    {
+        $body = $this->schemaIndex[$definition->bodySchemaName] ?? null;
+        $example = $body === null ? null : $this->exampleFromSchema($body, []);
+
+        return is_array($example) && $example !== []
+            ? $example
+            : $this->envelope->exampleErrorObject($definition);
+    }
+
+    /**
+     * The example value a serialized schema describes: its own `example`, a one-item
+     * list of its items' example, an object of its properties' examples, or the example
+     * of what it references.
+     *
+     * An array property carries its example on `items`, the only place a scalar
+     * `#[Example]` can sit, so a list of one is what the schema actually advertises.
+     *
+     * @param  array<string, mixed>  $schema
+     * @param  array<int, string>  $seen  Refs already followed, so a cycle can't recurse forever.
+     */
+    private function exampleFromSchema(array $schema, array $seen): mixed
+    {
+        if (array_key_exists('example', $schema)) {
+            return $schema['example'];
+        }
+
+        if (isset($schema['$ref']) && is_string($schema['$ref'])) {
+            $ref = $schema['$ref'];
+
+            if (in_array($ref, $seen, true)) {
+                return null;
+            }
+
+            $name = substr($ref, strrpos($ref, '/') + 1);
+            $target = $this->schemaIndex[$name] ?? null;
+
+            return $target === null ? null : $this->exampleFromSchema($target, [...$seen, $ref]);
+        }
+
+        if (isset($schema['allOf']) && is_array($schema['allOf'])) {
+            $merged = [];
+
+            foreach ($schema['allOf'] as $part) {
+                $value = is_array($part) ? $this->exampleFromSchema($part, $seen) : null;
+
+                if (is_array($value)) {
+                    $merged = [...$merged, ...$value];
+                }
+            }
+
+            return $merged === [] ? null : $merged;
+        }
+
+        if (isset($schema['items']) && is_array($schema['items'])) {
+            $item = $this->exampleFromSchema($schema['items'], $seen);
+
+            return $item === null ? null : [$item];
+        }
+
+        if (isset($schema['properties']) && is_array($schema['properties'])) {
+            $object = [];
+
+            foreach ($schema['properties'] as $name => $property) {
+                $value = is_array($property) ? $this->exampleFromSchema($property, $seen) : null;
+
+                if ($value !== null) {
+                    $object[$name] = $value;
+                }
+            }
+
+            return $object === [] ? null : $object;
+        }
+
+        return null;
     }
 
     /**
@@ -555,6 +673,8 @@ class OperationErrorAttacher
             ]);
         }
 
+        $examples = [];
+
         if (count($definitions) === 1) {
             $description = $definitions[0]->codeAndMessage();
             $schema = new OA\Schema(['ref' => '#/components/schemas/' . $definitions[0]->responseSchemaName]);
@@ -567,6 +687,20 @@ class OperationErrorAttacher
 
             $description = "Possible errors:\n\n" . implode("\n", $lines);
             $schema = $this->envelope->sharedStatusSchema($definitions);
+
+            // A oneOf renders one synthesized body, which reads as if it were the only
+            // answer. One named example per error, in the order listed above, gives the
+            // reader every possible body. `summary` is the bare code, because that is
+            // what a switcher lists; `description` repeats the error's own line, so a
+            // renderer showing example metadata says which error is on screen.
+            foreach ($definitions as $definition) {
+                $examples[] = new OA\Examples([
+                    'example' => $definition->code,
+                    'summary' => $definition->code,
+                    'description' => $definition->codeAndMessage(),
+                    'value' => $this->envelope->exampleEnvelope($this->errorObjectExample($definition)),
+                ]);
+            }
         }
 
         if ($scenarios !== []) {
@@ -582,10 +716,11 @@ class OperationErrorAttacher
             'response' => $status,
             'description' => $description,
             'content' => [
-                new OA\MediaType([
+                new OA\MediaType(array_filter([
                     'mediaType' => 'application/json',
                     'schema' => $schema,
-                ]),
+                    'examples' => $examples === [] ? null : $examples,
+                ], static fn (mixed $value): bool => $value !== null)),
             ],
         ]);
     }

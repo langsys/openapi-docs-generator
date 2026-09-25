@@ -807,7 +807,9 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | Errors for the status | Emitted response |
 |---|---|
 | One | `$ref` to `#/components/responses/{Name}` |
-| Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. |
+| Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. The media type also carries one named example per error, keyed by its code. |
+
+**Every possible body is shown.** A `oneOf` alone renders as a single synthesized body, which reads as though it were the only answer a client can get. So a shared status also carries one example per error, keyed by its code and ordered as the list above it, and a renderer that supports multiple examples offers a switcher between them. Each entry's `summary` is the bare code, for the switcher's list, and its `description` repeats that error's `` `code`: MESSAGE `` line, so a renderer showing example metadata says which error is on screen. Each example is a whole response body, built from the examples the error's own schemas advertise: the filled message, the code, the template and its typed details. An array property becomes a one-item list from its items' example, which is where a scalar `#[Example]` on an array sits. A property with no example anywhere is left out rather than invented, so a field your app owns never shows made-up content.
 
 A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]`, `implied_errors` or a rule names a class that is not a documented error: not a concrete subclass of `errors.base_class`, or never scanned. The message says which.
 

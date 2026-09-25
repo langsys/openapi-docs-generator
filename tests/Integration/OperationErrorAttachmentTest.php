@@ -258,3 +258,23 @@ test('validation scenarios are listed on the operation that has them, leaving ot
     expect($purchase['description'])->toContain('Possible validation errors:')
         ->and($purchase['content']['application/json']['schema']['$ref'])->toBe('#/components/schemas/ValidationErrorResponse');
 });
+
+test('a shared status carries one named example per error, built from the error schemas', function () {
+    $doc = generateWithErrors($this->docsFile, $this->yamlFile);
+
+    $media = $doc['paths']['/api/batch']['post']['responses']['422']['content']['application/json'];
+
+    expect(array_keys($media['examples']))->toBe(['batch_too_large', 'validation_failed'])
+        ->and($media['examples']['validation_failed']['summary'])->toBe('validation_failed')
+        ->and($media['examples']['validation_failed']['description'])
+        ->toBe('`validation_failed`: One or more request fields failed validation.');
+
+    $value = $media['examples']['batch_too_large']['value'];
+
+    expect($value['status'])->toBeFalse()
+        ->and($value['data'])->toBe([])
+        ->and($value['error']['code'])->toBe('batch_too_large')
+        ->and($value['error']['details'])->toHaveKeys(['max', 'submitted'])
+        // The schema still discriminates; the examples sit beside it.
+        ->and($media['schema']['properties']['error'])->toHaveKey('oneOf');
+});
