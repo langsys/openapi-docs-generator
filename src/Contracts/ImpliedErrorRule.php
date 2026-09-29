@@ -27,7 +27,7 @@ interface ImpliedErrorRule
      *                                     resolved route (null when unresolvable).
      * @param  ReflectionMethod|null  $action  The backing controller action, when
      *                                         the operation has one.
-     * @return array<int, class-string>
+     * @return array<int, class-string|\BackedEnum>  Error classes, or ErrorCatalog cases.
      */
     public function errorsFor(OperationContext $context, ?ReflectionMethod $action): array;
 }

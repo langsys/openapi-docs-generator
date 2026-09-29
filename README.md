@@ -25,6 +25,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
 - [Auto-Generated Response Schemas](#auto-generated-response-schemas)
 - [API Errors](#api-errors)
   - [The Error Class Contract](#the-error-class-contract)
+  - [Errors as Enum Cases](#errors-as-enum-cases)
   - [The Error Response](#the-error-response)
   - [Attaching Errors to Operations](#attaching-errors-to-operations)
   - [Validation Scenarios](#validation-scenarios)
@@ -611,6 +612,45 @@ Public properties are the error's typed details. These attributes work with erro
 | `#[EnvelopeField]` | property | Emit this property at the top level of the `error` object instead of under `details`, e.g. a validation `errors` map. |
 | `#[Description('…')]` | property | Describe a details or envelope property. |
 | `#[Throws(Error::class, …)]` | method, class | Declare which errors a controller action, or every action of a controller, can return. |
+
+### Errors as Enum Cases
+
+An error with no typed details is a code, a message and a status. One class per such error is a lot of files for three values, so they can be cases of one enum instead:
+
+```php
+use Langsys\OpenApiDocsGenerator\Contracts\ErrorCatalog;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCase;
+
+enum ApiErrors: string implements ErrorCatalog
+{
+    #[ErrorCase(status: 409, message: 'The plan cycle is already that one.')]
+    case SamePlanCycle = 'same_plan_cycle';
+
+    #[ErrorCase(status: HttpCode::NOT_FOUND, message: 'No plan with that id.')]
+    case PlanNotFound = 'plan_not_found';
+}
+```
+
+- The enum is **string-backed**, and each case's backing value is the error's `CODE`.
+- `#[ErrorCase]` carries the `message` and the `status`, an int or an int-backed enum case, exactly as an error class's `MESSAGE` and `STATUS` do.
+- **Discovery needs no configuration.** Any enum implementing `ErrorCatalog` in the scanned directories is picked up, alongside the error classes.
+- Schema names are the case name in StudlyCase plus `errors.case_suffix`, which defaults to `Error`, so `SamePlanCycle` produces `SamePlanCycleError`, `SamePlanCycleErrorBody` and `SamePlanCycleErrorResponse`. **A case and a class of the same name document identically**, so moving an error between the two forms leaves the spec unchanged.
+- A case has no properties, so it has no `details` schema, and a `{marker}` in its message fails generation: there would be nothing to fill it. An error that needs typed details or markers stays a class.
+- A duplicate code fails as it always has, naming both sources whether they are classes or cases.
+
+A case is used wherever an error class is, and the two mix freely:
+
+```php
+#[Throws(InsufficientBalanceError::class, ApiErrors::SamePlanCycle)]
+public function subscribe(...) { … }
+
+'implied_errors' => [
+    'middleware' => ['auth:sanctum' => [ApiErrors::Unauthenticated]],
+    'not_found'  => ApiErrors::PlanNotFound,
+],
+```
+
+An `ImpliedErrorRule` may return cases too, mixed with class strings.
 
 ### The Error Response
 

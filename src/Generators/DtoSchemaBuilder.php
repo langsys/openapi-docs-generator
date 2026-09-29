@@ -4,6 +4,7 @@ namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use Exception;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
@@ -17,6 +18,7 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\OpenApiAttribute;
 use OpenApi\Annotations as OA;
 use OpenApi\Generator as OpenApiGenerator;
 use ReflectionClass;
+use ReflectionEnumBackedCase;
 use ReflectionNamedType;
 use ReflectionProperty;
 use ReflectionType;
@@ -52,6 +54,7 @@ class DtoSchemaBuilder
         'base_class' => null,
         'paths' => null,
         'code_schema' => 'ErrorCode',
+        'case_suffix' => 'Error',
     ];
 
     /** @var array<string, mixed> Merged `errors` config (see DEFAULT_ERROR_CONFIG). */
@@ -126,7 +129,7 @@ class DtoSchemaBuilder
     public function buildAll(): array
     {
         $schemas = [];
-        $classes = $this->discoverDtoClasses();
+        ['classes' => $classes, 'catalogs' => $catalogs] = $this->discoverTypes();
         $this->oneOfGroups = $this->discoverOneOfGroups($classes);
         $this->errorDefinitions = [];
 
@@ -143,6 +146,12 @@ class DtoSchemaBuilder
                 if ($this->isResource($className)) {
                     $schemas = array_merge($schemas, $this->buildResponseSchemas($className, $schema));
                 }
+            }
+        }
+
+        foreach ($catalogs as $catalog) {
+            foreach ($this->errorContract->casesOf($catalog) as $case) {
+                $schemas = array_merge($schemas, $this->buildErrorCaseSchemas($catalog, $case));
             }
         }
 
@@ -210,31 +219,45 @@ class DtoSchemaBuilder
     // -------------------------------------------------------------------------
 
     /**
-     * Scan configured directories and return fully qualified class names of Data subclasses.
+     * Scan the configured directories for the types this builder documents: Spatie Data
+     * subclasses, and the error catalogs whose cases are errors.
      *
-     * @return string[]
+     * @return array{classes: array<int, string>, catalogs: array<int, string>}
      */
-    private function discoverDtoClasses(): array
+    private function discoverTypes(): array
     {
         $classes = [];
+        $catalogs = [];
         $finder = new Finder();
 
         $paths = array_unique(array_merge($this->dtoPaths, (array) ($this->errorConfig['paths'] ?? [])));
         $existingPaths = array_filter($paths, 'is_dir');
 
         if (empty($existingPaths)) {
-            return [];
+            return ['classes' => [], 'catalogs' => []];
         }
 
         foreach ($finder->files()->name('*.php')->in($existingPaths) as $file) {
-            $className = $this->extractClassName($file->getRealPath());
+            $name = $this->extractClassName($file->getRealPath());
 
-            if ($className !== null && ! (new ReflectionClass($className))->isAbstract() && $this->isDataSubclass($className)) {
-                $classes[] = $className;
+            if ($name === null || (! class_exists($name) && ! enum_exists($name))) {
+                continue;
+            }
+
+            if (enum_exists($name)) {
+                if ($this->errorContract->isErrorCatalog($name)) {
+                    $catalogs[] = $name;
+                }
+
+                continue;
+            }
+
+            if (! (new ReflectionClass($name))->isAbstract() && $this->isDataSubclass($name)) {
+                $classes[] = $name;
             }
         }
 
-        return $classes;
+        return ['classes' => $classes, 'catalogs' => $catalogs];
     }
 
     /**
@@ -255,7 +278,7 @@ class DtoSchemaBuilder
             $namespace = trim($matches[1]);
         }
 
-        if (preg_match('/^\s*(?:final\s+|abstract\s+|readonly\s+)*class\s+(\w+)/m', $contents, $matches)) {
+        if (preg_match('/^\s*(?:final\s+|abstract\s+|readonly\s+)*(?:class|enum)\s+(\w+)/m', $contents, $matches)) {
             $class = $matches[1];
         }
 
@@ -1116,16 +1139,7 @@ class DtoSchemaBuilder
         $reflection = new ReflectionClass($className);
         ['code' => $code, 'message' => $message, 'status' => $status, 'markers' => $markers] = $this->errorContract->read($reflection);
 
-        foreach ($this->errorDefinitions as $existing) {
-            if ($existing->code === $code) {
-                throw new OpenApiDocsException(sprintf(
-                    'Duplicate error code \'%s\': declared by both %s and %s.',
-                    $code,
-                    $existing->className,
-                    $className,
-                ));
-            }
-        }
+        $this->assertCodeIsUnique($code, $className);
 
         $schemaName = class_basename($className);
         $detailsSchema = $this->buildSchema($className);
@@ -1141,7 +1155,7 @@ class DtoSchemaBuilder
             hasDetails: $detailsSchema !== null,
             markers: $markers,
         );
-        $this->errorDefinitions[$className] = $definition;
+        $this->errorDefinitions[$definition->identifier()] = $definition;
 
         $schemas = [];
         if ($detailsSchema !== null) {
@@ -1151,6 +1165,62 @@ class DtoSchemaBuilder
         $schemas[] = $this->errorEnvelope->responseSchema($definition);
 
         return $schemas;
+    }
+
+    /**
+     * Build the schemas for one error declared as an enum case: the `{Name}Body` error
+     * object and the `{Name}Response` envelope around it. A case has no properties, so
+     * there is no details schema, and the names match those of the class of the same
+     * name, so moving an error between the two forms leaves the spec unchanged.
+     *
+     * @return OA\Schema[]
+     *
+     * @throws OpenApiDocsException on a broken case contract or a duplicate code
+     */
+    private function buildErrorCaseSchemas(string $enum, ReflectionEnumBackedCase $case): array
+    {
+        ['code' => $code, 'message' => $message, 'status' => $status] = $this->errorContract->readCase($case);
+
+        $this->assertCodeIsUnique($code, $enum . '::' . $case->getName());
+
+        $schemaName = Str::studly($case->getName()) . (string) $this->errorConfig['case_suffix'];
+
+        $definition = new ErrorDefinition(
+            className: $enum,
+            schemaName: $schemaName,
+            responseSchemaName: $schemaName . 'Response',
+            bodySchemaName: $schemaName . 'Body',
+            code: $code,
+            message: $message,
+            status: $status,
+            hasDetails: false,
+            markers: [],
+            case: $case->getName(),
+        );
+        $this->errorDefinitions[$definition->identifier()] = $definition;
+
+        return [
+            $this->errorEnvelope->bodySchema($definition),
+            $this->errorEnvelope->responseSchema($definition),
+        ];
+    }
+
+    /**
+     * @throws OpenApiDocsException when another error already declares this code,
+     *                              naming both sources whether they are classes or cases.
+     */
+    private function assertCodeIsUnique(string $code, string $source): void
+    {
+        foreach ($this->errorDefinitions as $existing) {
+            if ($existing->code === $code) {
+                throw new OpenApiDocsException(sprintf(
+                    'Duplicate error code \'%s\': declared by both %s and %s.',
+                    $code,
+                    $existing->identifier(),
+                    $source,
+                ));
+            }
+        }
     }
 
     /**

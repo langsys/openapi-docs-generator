@@ -4,8 +4,12 @@ namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use BackedEnum;
 use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
+use Langsys\OpenApiDocsGenerator\Contracts\ErrorCatalog;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\Description;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCase;
 use ReflectionClass;
+use ReflectionEnum;
+use ReflectionEnumBackedCase;
 use Spatie\LaravelData\Data;
 
 /**
@@ -96,6 +100,93 @@ final class ErrorContract
     }
 
     /**
+     * Whether a type is an error catalog: an enum whose cases are errors.
+     */
+    public function isErrorCatalog(string $type): bool
+    {
+        return enum_exists($type) && is_subclass_of($type, ErrorCatalog::class);
+    }
+
+    /**
+     * The cases of an error catalog.
+     *
+     * @return array<int, ReflectionEnumBackedCase>
+     *
+     * @throws OpenApiDocsException when the enum isn't string-backed, since the backing
+     *                              value is the error's code.
+     */
+    public function casesOf(string $enum): array
+    {
+        $reflection = new ReflectionEnum($enum);
+        $backingType = $reflection->getBackingType()?->getName();
+
+        if ($backingType !== 'string') {
+            throw new OpenApiDocsException(sprintf(
+                '%s implements %s, so it must be a string-backed enum whose backing value is the error code; got %s.',
+                $enum,
+                ErrorCatalog::class,
+                $backingType ?? 'no backing type',
+            ));
+        }
+
+        /** @var array<int, ReflectionEnumBackedCase> $cases */
+        $cases = $reflection->getCases();
+
+        return $cases;
+    }
+
+    /**
+     * Read and validate one error declared as an enum case: its backing value is the
+     * code, and its #[ErrorCase] carries the message and status.
+     *
+     * @return array{code: string, message: string, status: int, markers: array<int, string>}
+     *
+     * @throws OpenApiDocsException naming the enum, the case and the rule it breaks.
+     */
+    public function readCase(ReflectionEnumBackedCase $case): array
+    {
+        $name = $case->getDeclaringClass()->getName() . '::' . $case->getName();
+        $attributes = $case->getAttributes(ErrorCase::class);
+
+        if ($attributes === []) {
+            throw new OpenApiDocsException(sprintf(
+                '%s must carry #[ErrorCase(status: …, message: …)]: every case of an error catalog declares its own status and message.',
+                $name,
+            ));
+        }
+
+        /** @var ErrorCase $errorCase */
+        $errorCase = $attributes[0]->newInstance();
+        $code = (string) $case->getBackingValue();
+
+        if ($code === '') {
+            throw new OpenApiDocsException(sprintf('%s must have a non-empty backing value: it is the error code.', $name));
+        }
+
+        if ($errorCase->message === '') {
+            throw new OpenApiDocsException(sprintf('The #[ErrorCase] message on %s must be a non-empty string.', $name));
+        }
+
+        $markers = $this->markerNames($errorCase->message);
+
+        if ($markers !== []) {
+            throw new OpenApiDocsException(sprintf(
+                'The #[ErrorCase] message on %s uses the marker {%s}, but an enum case has no properties to fill it; '
+                . 'declare this error as a class with that property, or remove the marker.',
+                $name,
+                $markers[0],
+            ));
+        }
+
+        return [
+            'code' => $code,
+            'message' => $errorCase->message,
+            'status' => $this->normalizeStatus($errorCase->status, 'The #[ErrorCase] status on ' . $name),
+            'markers' => [],
+        ];
+    }
+
+    /**
      * Read and validate an error class's identity.
      *
      * @return array{code: string, message: string, status: int, markers: array<int, string>}
@@ -168,13 +259,22 @@ final class ErrorContract
             ));
         }
 
-        $value = $class->getConstant('STATUS');
+        return $this->normalizeStatus($class->getConstant('STATUS'), $class->getName() . '::STATUS');
+    }
+
+    /**
+     * An HTTP status from an int or an int-backed enum case.
+     *
+     * @throws OpenApiDocsException naming the subject that declared it.
+     */
+    private function normalizeStatus(mixed $value, string $subject): int
+    {
         $status = $value instanceof BackedEnum ? $value->value : $value;
 
         if (! is_int($status) || $status < 100 || $status > 599) {
             throw new OpenApiDocsException(sprintf(
-                '%s::STATUS must be an HTTP status code between 100 and 599 (an int, or an int-backed enum case); got %s.',
-                $class->getName(),
+                '%s must be an HTTP status code between 100 and 599 (an int, or an int-backed enum case); got %s.',
+                $subject,
                 $value instanceof BackedEnum
                     ? get_class($value) . '::' . $value->name . ' (' . var_export($value->value, true) . ')'
                     : var_export($value, true),
@@ -210,8 +310,7 @@ final class ErrorContract
      */
     private function markers(ReflectionClass $class, string $message): array
     {
-        preg_match_all(self::MARKER_PATTERN, $message, $matches);
-        $markers = array_values(array_unique($matches[1]));
+        $markers = $this->markerNames($message);
 
         foreach ($markers as $marker) {
             $property = $class->hasProperty($marker) ? $class->getProperty($marker) : null;
@@ -228,5 +327,17 @@ final class ErrorContract
         }
 
         return $markers;
+    }
+
+    /**
+     * The `{marker}` names in a message, in order of first appearance.
+     *
+     * @return array<int, string>
+     */
+    private function markerNames(string $message): array
+    {
+        preg_match_all(self::MARKER_PATTERN, $message, $matches);
+
+        return array_values(array_unique($matches[1]));
     }
 }

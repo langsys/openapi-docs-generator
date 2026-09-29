@@ -3,7 +3,9 @@
 namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use Illuminate\Database\Eloquent\Model;
+use BackedEnum;
 use Illuminate\Routing\Router;
+use Langsys\OpenApiDocsGenerator\Contracts\ErrorCatalog;
 use Langsys\OpenApiDocsGenerator\Contracts\ImpliedErrorRule;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
 use Langsys\OpenApiDocsGenerator\Contracts\ValidationScenarioResolver;
@@ -98,7 +100,7 @@ class OperationErrorAttacher
         private ?LoggerInterface $logger = null,
     ) {
         foreach (($impliedErrors['middleware'] ?? []) as $middleware => $classes) {
-            $classes = array_values((array) $classes);
+            $classes = $this->toList($classes);
             if ($classes === []) {
                 continue;
             }
@@ -109,8 +111,8 @@ class OperationErrorAttacher
             ];
         }
 
-        $this->validationErrors = array_values((array) ($impliedErrors['validation'] ?? []));
-        $this->notFoundErrors = array_values((array) ($impliedErrors['not_found'] ?? []));
+        $this->validationErrors = $this->toList($impliedErrors['validation'] ?? null);
+        $this->notFoundErrors = $this->toList($impliedErrors['not_found'] ?? null);
         $this->notFoundBinding = (string) ($impliedErrors['not_found_binding'] ?? 'model');
         $this->rules = (new ImpliedErrorRuleFactory())->makeMany((array) ($impliedErrors['rules'] ?? []));
         $this->scenarioResolvers = (new ValidationScenarioResolverFactory())->makeMany($impliedErrors['validation_scenarios'] ?? []);
@@ -136,7 +138,7 @@ class OperationErrorAttacher
         $this->contract = $contract;
         $this->definitions = [];
         foreach ($errorDefinitions as $definition) {
-            $this->definitions[$definition->className] = $definition;
+            $this->definitions[$definition->identifier()] = $definition;
         }
 
         $this->schemaIndex = $this->indexSchemas($openapi);
@@ -194,7 +196,7 @@ class OperationErrorAttacher
                 ));
             }
 
-            $classes = array_values(array_unique(array_merge($classes, $this->validationErrors)));
+            $classes = $this->uniqueErrors(array_merge($classes, $this->validationErrors));
         }
 
         if ($classes === []) {
@@ -406,7 +408,42 @@ class OperationErrorAttacher
             $classes = array_merge($classes, array_values($rule->errorsFor($context, $reflection)));
         }
 
-        return array_values(array_unique($classes));
+        return $this->uniqueErrors($classes);
+    }
+
+    /**
+     * Deduplicate error references by what they point at, since a reference is either a
+     * class string or an enum case and the two can't be compared with array_unique().
+     *
+     * @param  array<int, string|BackedEnum>  $errors
+     * @return array<int, string|BackedEnum>
+     */
+    private function uniqueErrors(array $errors): array
+    {
+        $unique = [];
+
+        foreach ($errors as $error) {
+            $unique[ErrorDefinition::keyFor($error)] = $error;
+        }
+
+        return array_values($unique);
+    }
+
+    /**
+     * A config value that is one error or a list of them.
+     *
+     * Not `(array) $value`: casting an enum case that way yields its own properties
+     * rather than a single-item list.
+     *
+     * @return array<int, string|BackedEnum>
+     */
+    private function toList(mixed $value): array
+    {
+        if ($value === null || $value === []) {
+            return [];
+        }
+
+        return is_array($value) ? array_values($value) : [$value];
     }
 
     private function actionName(ReflectionMethod $method): string
@@ -586,13 +623,32 @@ class OperationErrorAttacher
     /**
      * @throws OpenApiDocsException
      */
-    private function definitionFor(string $class, string $method, string $path): ErrorDefinition
+    private function definitionFor(string|BackedEnum $error, string $method, string $path): ErrorDefinition
     {
+        $class = ErrorDefinition::keyFor($error);
+
         if (isset($this->definitions[$class])) {
             return $this->definitions[$class];
         }
 
         $location = strtoupper($method) . ' ' . $path;
+
+        if ($error instanceof BackedEnum) {
+            if (! $error instanceof ErrorCatalog) {
+                throw new OpenApiDocsException(sprintf(
+                    '%s declared for %s is not an error: its enum must implement %s.',
+                    $class,
+                    $location,
+                    ErrorCatalog::class,
+                ));
+            }
+
+            throw new OpenApiDocsException(sprintf(
+                'Error case %s declared for %s was never scanned; add its directory to the documentation set\'s errors.paths.',
+                $class,
+                $location,
+            ));
+        }
 
         if (! class_exists($class)) {
             throw new OpenApiDocsException(sprintf(

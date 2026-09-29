@@ -155,6 +155,12 @@ return [
             // Name of the shared error-code enum schema.
             'code_schema' => 'ErrorCode',
 
+            // Suffix for the schema names of an error declared as an enum case, so
+            // case SamePlanCycle becomes SamePlanCycleError, matching the class of that
+            // name. Any string-backed enum implementing Contracts\ErrorCatalog inside the
+            // scanned directories is discovered; no other configuration is needed.
+            'case_suffix' => 'Error',
+
             // Response-level field names. null omits a field; `error` cannot be null.
             //   status -> boolean, always false
             //   data   -> array, always empty (maxItems: 0)

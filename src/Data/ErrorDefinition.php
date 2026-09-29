@@ -13,7 +13,7 @@ namespace Langsys\OpenApiDocsGenerator\Data;
 final class ErrorDefinition
 {
     public function __construct(
-        /** @var class-string */
+        /** @var class-string The error class, or the enum declaring the case. */
         public readonly string $className,
         /** Details schema name (class basename), e.g. "InsufficientBalanceError". */
         public readonly string $schemaName,
@@ -31,7 +31,28 @@ final class ErrorDefinition
         public readonly bool $hasDetails,
         /** @var array<int, string> The `{marker}` names in MESSAGE, in order of first appearance. */
         public readonly array $markers = [],
+        /** The enum case this error was declared as, when it came from an ErrorCatalog. */
+        public readonly ?string $case = null,
     ) {
+    }
+
+    /**
+     * How this error is referred to: a class name, or "Enum::Case" when the error is
+     * a case of an {@see \Langsys\OpenApiDocsGenerator\Contracts\ErrorCatalog}.
+     */
+    public function identifier(): string
+    {
+        return $this->case === null ? $this->className : $this->className . '::' . $this->case;
+    }
+
+    /**
+     * The same identifier for a reference to an error: a class string, or an enum case.
+     */
+    public static function keyFor(string|\BackedEnum $error): string
+    {
+        return $error instanceof \BackedEnum
+            ? $error::class . '::' . $error->name
+            : ltrim($error, '\\');
     }
 
     /**
