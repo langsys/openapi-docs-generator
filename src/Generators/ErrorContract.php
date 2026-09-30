@@ -18,29 +18,38 @@ use Spatie\LaravelData\Data;
  *   class NotFoundError extends ApiError
  *   {
  *       public const CODE = 'not_found';
- *       public const MESSAGE = 'Resource not found';
  *       public const STATUS = 404;                  // or an int-backed enum case
+ *
+ *       public static function template(): string
+ *       {
+ *           return 'Resource not found';
+ *       }
  *   }
  *
  *   class ProjectNotFoundError extends NotFoundError
  *   {
  *       public const CODE = 'project_not_found';
- *       public const MESSAGE = 'No project with that id';
  *       // STATUS inherited
+ *
+ *       public static function template(): string
+ *       {
+ *           return 'No project with that id';
+ *       }
  *   }
  *
  * Every non-abstract subclass of a configured `errors.base_class` is an error.
- * CODE and MESSAGE must be declared by the class itself: constants inherit
- * silently, and an inherited CODE would make two failure modes indistinguishable.
- * STATUS may be inherited, since sharing a status is what a specific error's parent
- * is for. MESSAGE doubles as the documentation text, so a class-level
- * #[Description] is rejected rather than silently ignored. MESSAGE may contain
- * `{marker}` placeholders, and each must name a public property of the class,
- * which fills it.
+ * CODE and template() must be declared by the class itself: constants and methods
+ * inherit silently, and an inherited CODE or message would make two failure modes
+ * indistinguishable. STATUS may be inherited, since sharing a status is what a
+ * specific error's parent is for. template() returns the source-language message; it
+ * is a method rather than a constant so an app can write it through its framework's
+ * translate function. It doubles as the documentation text, so a class-level
+ * #[Description] is rejected rather than silently ignored. It may contain `{marker}`
+ * placeholders, and each must name a public property of the class, which fills it.
  */
 final class ErrorContract
 {
-    /** A `{marker}` placeholder in MESSAGE: a lowercase name in braces. */
+    /** A `{marker}` placeholder in a template: a lowercase name in braces. */
     public const MARKER_PATTERN = '/\{([a-z][a-z0-9_]*)\}/';
 
     /** @var array<int, class-string> */
@@ -137,7 +146,7 @@ final class ErrorContract
 
     /**
      * Read and validate one error declared as an enum case: its backing value is the
-     * code, and its #[ErrorCase] carries the message and status.
+     * code, its #[ErrorCase] carries the status, and the enum's template() the message.
      *
      * @return array{code: string, message: string, status: int, markers: array<int, string>}
      *
@@ -150,7 +159,7 @@ final class ErrorContract
 
         if ($attributes === []) {
             throw new OpenApiDocsException(sprintf(
-                '%s must carry #[ErrorCase(status: …, message: …)]: every case of an error catalog declares its own status and message.',
+                '%s must carry #[ErrorCase(status: …)]: every case of an error catalog declares its own status.',
                 $name,
             ));
         }
@@ -163,15 +172,18 @@ final class ErrorContract
             throw new OpenApiDocsException(sprintf('%s must have a non-empty backing value: it is the error code.', $name));
         }
 
-        if ($errorCase->message === '') {
-            throw new OpenApiDocsException(sprintf('The #[ErrorCase] message on %s must be a non-empty string.', $name));
+        $enum = $case->getDeclaringClass()->getName();
+        $message = $enum::from($code)->template();
+
+        if (! is_string($message) || $message === '') {
+            throw new OpenApiDocsException(sprintf('The template() of %s must return a non-empty string.', $name));
         }
 
-        $markers = $this->markerNames($errorCase->message);
+        $markers = $this->markerNames($message);
 
         if ($markers !== []) {
             throw new OpenApiDocsException(sprintf(
-                'The #[ErrorCase] message on %s uses the marker {%s}, but an enum case has no properties to fill it; '
+                'The template() of %s uses the marker {%s}, but an enum case has no properties to fill it; '
                 . 'declare this error as a class with that property, or remove the marker.',
                 $name,
                 $markers[0],
@@ -180,7 +192,7 @@ final class ErrorContract
 
         return [
             'code' => $code,
-            'message' => $errorCase->message,
+            'message' => $message,
             'status' => $this->normalizeStatus($errorCase->status, 'The #[ErrorCase] status on ' . $name),
             'markers' => [],
         ];
@@ -198,7 +210,7 @@ final class ErrorContract
         $this->rejectClassDescription($class);
 
         $code = $this->ownString($class, 'CODE');
-        $message = $this->ownString($class, 'MESSAGE');
+        $message = $this->ownTemplate($class);
 
         return [
             'code' => $code,
@@ -217,7 +229,7 @@ final class ErrorContract
 
         if ($constant === false) {
             throw new OpenApiDocsException(sprintf(
-                '%s must declare const %s: every concrete error class declares its own CODE and MESSAGE.',
+                '%s must declare const %s: every concrete error class declares its own CODE and template().',
                 $class->getName(),
                 $name,
             ));
@@ -242,6 +254,49 @@ final class ErrorContract
 
         if (! is_string($value) || $value === '') {
             throw new OpenApiDocsException(sprintf('%s::%s must be a non-empty string.', $class->getName(), $name));
+        }
+
+        return $value;
+    }
+
+    /**
+     * The class's own public static template(), called: the source-language message.
+     *
+     * @throws OpenApiDocsException
+     */
+    private function ownTemplate(ReflectionClass $class): string
+    {
+        if (! $class->hasMethod('template')) {
+            throw new OpenApiDocsException(sprintf(
+                '%s must declare public static function template(): string: every concrete error class declares its own CODE and template().',
+                $class->getName(),
+            ));
+        }
+
+        $method = $class->getMethod('template');
+        $declaringClass = $method->getDeclaringClass()->getName();
+
+        if ($declaringClass !== $class->getName()) {
+            throw new OpenApiDocsException(sprintf(
+                '%s inherits template() from %s instead of declaring its own. Methods inherit silently, '
+                . 'so two failure modes would share one message; declare template() on %s.',
+                $class->getName(),
+                $declaringClass,
+                $class->getShortName(),
+            ));
+        }
+
+        if (! $method->isPublic() || ! $method->isStatic()) {
+            throw new OpenApiDocsException(sprintf(
+                '%s::template() must be public and static: the documentation reads it without an instance.',
+                $class->getName(),
+            ));
+        }
+
+        $value = $method->invoke(null);
+
+        if (! is_string($value) || $value === '') {
+            throw new OpenApiDocsException(sprintf('%s::template() must return a non-empty string.', $class->getName()));
         }
 
         return $value;
@@ -292,7 +347,7 @@ final class ErrorContract
         for ($current = $class; $current !== false; $current = $current->getParentClass()) {
             if ($current->getAttributes(Description::class) !== []) {
                 throw new OpenApiDocsException(sprintf(
-                    '%s has a class-level #[Description]%s; an error class is documented by its MESSAGE constant, so remove the attribute.',
+                    '%s has a class-level #[Description]%s; an error class is documented by its template(), so remove the attribute.',
                     $class->getName(),
                     $current->getName() === $class->getName() ? '' : ' (on ' . $current->getName() . ')',
                 ));
@@ -301,7 +356,7 @@ final class ErrorContract
     }
 
     /**
-     * The `{marker}` names in MESSAGE, in order of first appearance. Each must name a
+     * The `{marker}` names in a class's template(), in order of first appearance. Each must name a
      * public, non-static property of the class, since that property fills it.
      *
      * @return array<int, string>
@@ -317,7 +372,7 @@ final class ErrorContract
 
             if ($property === null || ! $property->isPublic() || $property->isStatic()) {
                 throw new OpenApiDocsException(sprintf(
-                    '%s::MESSAGE uses the marker {%s}, but %s has no public property $%s to fill it; add the property or remove the marker.',
+                    '%s::template() uses the marker {%s}, but %s has no public property $%s to fill it; add the property or remove the marker.',
                     $class->getName(),
                     $marker,
                     $class->getShortName(),

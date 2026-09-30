@@ -78,7 +78,7 @@ it('rejects attributes on targets they do not support', function () {
         }, 'p'))->getAttributes(Throws::class)[0]->newInstance(),
         'EnvelopeField on a class' => fn () => (new ReflectionClass(new #[EnvelopeField] class {
         }))->getAttributes(EnvelopeField::class)[0]->newInstance(),
-        // An error class is documented by its MESSAGE constant, so Description is property-only.
+        // An error class is documented by its template(), so Description is property-only.
         'Description on a class' => fn () => (new ReflectionClass(new #[Description('x')] class {
         }))->getAttributes(Description::class)[0]->newInstance(),
     ];

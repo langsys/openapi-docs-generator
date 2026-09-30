@@ -8,6 +8,9 @@ use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 class PlanCycleAlreadySetClassError extends ApiError
 {
     public const CODE = 'plan_cycle_already_set_class';
-    public const MESSAGE = 'The plan cycle is already that one.';
+    public static function template(): string
+    {
+        return 'The plan cycle is already that one.';
+    }
     public const STATUS = 409;
 }

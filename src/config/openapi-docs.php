@@ -131,8 +131,11 @@ return [
         // Every non-abstract subclass of `base_class` is an API error. Each one
         // declares its identity with class constants:
         //   public const CODE = 'not_found';             // declared by the class itself
-        //   public const MESSAGE = 'Resource not found'; // declared by the class itself; also the docs text
         //   public const STATUS = 404;                   // int or int-backed enum; may be inherited
+        //   public static function template(): string    // declared by the class itself; the message
+        //   {                                            // in the source language, and the docs text
+        //       return 'Resource not found';
+        //   }
         // Its response is
         //   { status: false, data: [], error: { message, code, details, ... } }
         // For each error the documentation set's operations reference, the
@@ -172,11 +175,11 @@ return [
             ],
 
             // Field names inside the error object. null omits a field; `code` cannot be null.
-            //   message  -> string, MESSAGE with {marker}s filled from #[Example] values as example
+            //   message  -> string, template() with {marker}s filled from #[Example] values as example
             //   code     -> string enum of the single code
-            //   template -> string, MESSAGE verbatim: the source text a client translates
-            //   params   -> object with one property per {marker} in MESSAGE, built from the
-            //               same-named public property (omitted when MESSAGE has no markers)
+            //   template -> string, template() verbatim: the source text a client translates
+            //   params   -> object with one property per {marker} in template(), built from the
+            //               same-named public property (omitted when template() has no markers)
             //   details  -> $ref to the `{Name}` details schema (omitted when the
             //               class has no non-#[EnvelopeField] properties)
             // Properties marked #[EnvelopeField] follow at the top level of the error object.

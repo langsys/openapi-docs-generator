@@ -159,7 +159,7 @@ it('enforces the error class contract before anything is written', function (str
     'CODE missing' => [
         'class NoCodeError extends ApiError
 {
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'NoCodeError must declare const CODE',
@@ -167,22 +167,39 @@ it('enforces the error class contract before anything is written', function (str
     'CODE inherited' => [
         'class InheritsCodeError extends NotFoundError
 {
-    public const MESSAGE = "A more specific not found";
+    public static function template(): string { return "A more specific not found"; }
 }',
         'InheritsCodeError inherits CODE from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
     ],
-    'MESSAGE inherited' => [
+    'template() inherited' => [
         'class InheritsMessageError extends NotFoundError
 {
     public const CODE = "specific_not_found";
 }',
-        'InheritsMessageError inherits MESSAGE from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
+        'InheritsMessageError inherits template() from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
+    ],
+    'template() missing' => [
+        'class NoTemplateError extends ApiError
+{
+    public const CODE = "no_template";
+    public const STATUS = 400;
+}',
+        'NoTemplateError must declare public static function template(): string',
+    ],
+    'template() not static' => [
+        'class InstanceTemplateError extends ApiError
+{
+    public const CODE = "instance_template";
+    public const STATUS = 400;
+    public function template(): string { return "m"; }
+}',
+        'InstanceTemplateError::template() must be public and static',
     ],
     'CODE empty' => [
         'class EmptyCodeError extends ApiError
 {
     public const CODE = "";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'EmptyCodeError::CODE must be a non-empty string',
@@ -191,7 +208,7 @@ it('enforces the error class contract before anything is written', function (str
         'class NoStatusError extends ApiError
 {
     public const CODE = "no_status";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
 }',
         'NoStatusError has no STATUS constant',
     ],
@@ -199,7 +216,7 @@ it('enforces the error class contract before anything is written', function (str
         'class BadStatusError extends ApiError
 {
     public const CODE = "bad_status";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 42;
 }',
         'BadStatusError::STATUS must be an HTTP status code',
@@ -209,7 +226,7 @@ it('enforces the error class contract before anything is written', function (str
 class DescribedError extends ApiError
 {
     public const CODE = "described";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'DescribedError has a class-level #[Description]',
@@ -218,7 +235,7 @@ class DescribedError extends ApiError
         'class CollidingError extends ApiError
 {
     public const CODE = "colliding";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -232,7 +249,7 @@ class DescribedError extends ApiError
         'class TemplateCollisionError extends ApiError
 {
     public const CODE = "template_collision";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -246,7 +263,7 @@ class DescribedError extends ApiError
         'class ParamsCollisionError extends ApiError
 {
     public const CODE = "params_collision";
-    public const MESSAGE = "m";
+    public static function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -260,21 +277,21 @@ class DescribedError extends ApiError
         'class UnfilledMarkerError extends ApiError
 {
     public const CODE = "unfilled_marker";
-    public const MESSAGE = "Up to {limit} items";
+    public static function template(): string { return "Up to {limit} items"; }
     public const STATUS = 422;
 }',
-        'UnfilledMarkerError::MESSAGE uses the marker {limit}, but UnfilledMarkerError has no public property $limit',
+        'UnfilledMarkerError::template() uses the marker {limit}, but UnfilledMarkerError has no public property $limit',
     ],
     'MESSAGE marker naming a non-public property' => [
         'class PrivateMarkerError extends ApiError
 {
     public const CODE = "private_marker";
-    public const MESSAGE = "Up to {limit} items";
+    public static function template(): string { return "Up to {limit} items"; }
     public const STATUS = 422;
 
     private int $limit = 3;
 }',
-        'PrivateMarkerError::MESSAGE uses the marker {limit}',
+        'PrivateMarkerError::template() uses the marker {limit}',
     ],
 ]);
 
@@ -282,7 +299,7 @@ it('rejects two error classes declaring the same CODE', function () {
     $dir = errorClassDir('class DuplicateCodeError extends ApiError
 {
     public const CODE = "not_found";
-    public const MESSAGE = "Also not found";
+    public static function template(): string { return "Also not found"; }
     public const STATUS = 404;
 }');
 
@@ -446,7 +463,7 @@ it('documents params from MESSAGE markers using the same-named public properties
     $dir = errorClassDir('class PlanLimitError extends ApiError
 {
     public const CODE = "plan_limit";
-    public const MESSAGE = "Your {plan} plan allows up to {limit} projects.";
+    public static function template(): string { return "Your {plan} plan allows up to {limit} projects."; }
     public const STATUS = 402;
 
     public function __construct(
@@ -486,7 +503,7 @@ it('omits template and params when their names are null, and still fills the mes
     $dir = errorClassDir('class QuietPlanLimitError extends ApiError
 {
     public const CODE = "quiet_plan_limit";
-    public const MESSAGE = "Up to {limit} projects.";
+    public static function template(): string { return "Up to {limit} projects."; }
     public const STATUS = 402;
 
     public function __construct(

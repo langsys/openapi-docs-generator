@@ -6,7 +6,10 @@ namespace Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures;
 class InsufficientBalanceError extends ApiError
 {
     public const CODE = 'insufficient_balance';
-    public const MESSAGE = 'Insufficient balance to complete this request';
+    public static function template(): string
+    {
+        return 'Insufficient balance to complete this request';
+    }
     public const STATUS = 402;
 
     public function __construct(

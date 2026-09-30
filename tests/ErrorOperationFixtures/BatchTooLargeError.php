@@ -8,7 +8,10 @@ use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 class BatchTooLargeError extends ApiError
 {
     public const CODE = 'batch_too_large';
-    public const MESSAGE = 'The submitted batch has more items than the endpoint allows.';
+    public static function template(): string
+    {
+        return 'The submitted batch has more items than the endpoint allows.';
+    }
     public const STATUS = 422;
 
     public function __construct(

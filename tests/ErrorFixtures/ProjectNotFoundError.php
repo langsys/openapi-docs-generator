@@ -6,5 +6,8 @@ namespace Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures;
 class ProjectNotFoundError extends NotFoundError
 {
     public const CODE = 'project_not_found';
-    public const MESSAGE = 'No project with that id';
+    public static function template(): string
+    {
+        return 'No project with that id';
+    }
 }

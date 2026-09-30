@@ -388,7 +388,7 @@ class OpenApiGenerator
 
     /**
      * Emit a reusable `components.responses.{Name}` for every discovered error:
-     * "`code`: MESSAGE" as description (the notation shared-status responses list,
+     * "`code`: message" as description (the notation shared-status responses list,
      * see ErrorDefinition::codeAndMessage()), `application/json` content `$ref`ing
      * the `{Name}Response` envelope, and `x-http-status` from its STATUS.
      * An annotation-defined response with the same name takes precedence.

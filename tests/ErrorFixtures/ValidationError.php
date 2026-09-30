@@ -9,7 +9,10 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\EnvelopeField;
 class ValidationError extends ApiError
 {
     public const CODE = 'validation_failed';
-    public const MESSAGE = 'One or more request fields failed validation.';
+    public static function template(): string
+    {
+        return 'One or more request fields failed validation.';
+    }
     public const STATUS = HttpCode::UNPROCESSABLE_ENTITY;
 
     public function __construct(

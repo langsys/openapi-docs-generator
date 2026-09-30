@@ -568,7 +568,7 @@ Document machine-readable API errors from Spatie Data classes, one class per fai
 
 ### The Error Class Contract
 
-An error class declares its identity with three constants:
+An error class declares its identity with two constants and one static method:
 
 ```php
 abstract class ApiError extends Data {}
@@ -576,34 +576,44 @@ abstract class ApiError extends Data {}
 class NotFoundError extends ApiError
 {
     public const CODE = 'not_found';
-    public const MESSAGE = 'Resource not found';
     public const STATUS = 404;          // or an int-backed enum case, e.g. HttpCode::NOT_FOUND
+
+    public static function template(): string
+    {
+        return 'Resource not found';
+    }
 }
 
 class ProjectNotFoundError extends NotFoundError
 {
     public const CODE = 'project_not_found';
-    public const MESSAGE = 'No project with that id';
     // STATUS is inherited from NotFoundError
+
+    public static function template(): string
+    {
+        return 'No project with that id';
+    }
 }
 ```
 
-| Constant | Type | Rule |
+| Member | Type | Rule |
 |---|---|---|
-| `CODE` | string | The slug clients branch on. Every concrete error class declares its own. |
-| `MESSAGE` | string | The default human message, and the documentation text. Every concrete error class declares its own. May contain [`{marker}` placeholders](#message-templates). |
-| `STATUS` | int, or an int-backed enum | The HTTP status. May be inherited, which is what a specific error's parent is for. |
+| `CODE` | string constant | The slug clients branch on. Every concrete error class declares its own. |
+| `template()` | public static method returning a string | The message in the source language, and the documentation text. Every concrete error class declares its own. May contain [`{marker}` placeholders](#message-templates). |
+| `STATUS` | int, or an int-backed enum, constant | The HTTP status. May be inherited, which is what a specific error's parent is for. |
+
+The message is a method, not a constant, so an app writes it the way it writes any other text it shows — in Laravel, as `__('No project with that id')`, which a translation tool can find and a translation package can serve. The generator only reads the string it returns.
 
 Typed class constants such as `public const string CODE` work too, on PHP 8.3 and later.
 
-Constants inherit silently, so a subclass that forgot to redeclare `CODE` would share its parent's code without anyone noticing. Generation therefore fails, before anything is written, when:
+Constants and methods inherit silently, so a subclass that forgot to redeclare `CODE` or `template()` would share its parent's without anyone noticing. Generation therefore fails, before anything is written, when:
 
-- a concrete error class inherits `CODE` or `MESSAGE` instead of declaring it;
+- a concrete error class inherits `CODE` or `template()` instead of declaring it, or its `template()` is not public and static, or returns an empty string;
 - two error classes declare the same `CODE`;
 - no `STATUS` can be resolved, or it is not an HTTP status between 100 and 599;
-- an error class carries a class-level `#[Description]`, because `MESSAGE` already documents it;
+- an error class carries a class-level `#[Description]`, because `template()` already documents it;
 - an `#[EnvelopeField]` property reuses an error-object field name;
-- `MESSAGE` contains a `{marker}` that names no public property of the class.
+- `template()` returns a `{marker}` that names no public property of the class.
 
 Public properties are the error's typed details. These attributes work with errors:
 
@@ -623,19 +633,27 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\ErrorCase;
 
 enum ApiErrors: string implements ErrorCatalog
 {
-    #[ErrorCase(status: 409, message: 'The plan cycle is already that one.')]
+    #[ErrorCase(status: 409)]
     case SamePlanCycle = 'same_plan_cycle';
 
-    #[ErrorCase(status: HttpCode::NOT_FOUND, message: 'No plan with that id.')]
+    #[ErrorCase(status: HttpCode::NOT_FOUND)]
     case PlanNotFound = 'plan_not_found';
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::SamePlanCycle => 'The plan cycle is already that one.',
+            self::PlanNotFound  => 'No plan with that id.',
+        };
+    }
 }
 ```
 
 - The enum is **string-backed**, and each case's backing value is the error's `CODE`.
-- `#[ErrorCase]` carries the `message` and the `status`, an int or an int-backed enum case, exactly as an error class's `MESSAGE` and `STATUS` do.
+- `#[ErrorCase]` carries the `status`, an int or an int-backed enum case, exactly as an error class's `STATUS` does, and `template()` returns each case's message, exactly as an error class's does. `ErrorCatalog` declares `template()`, so PHP requires it.
 - **Discovery needs no configuration.** Any enum implementing `ErrorCatalog` in the scanned directories is picked up, alongside the error classes.
 - Schema names are the case name in StudlyCase plus `errors.case_suffix`, which defaults to `Error`, so `SamePlanCycle` produces `SamePlanCycleError`, `SamePlanCycleErrorBody` and `SamePlanCycleErrorResponse`. **A case and a class of the same name document identically**, so moving an error between the two forms leaves the spec unchanged.
-- A case has no properties, so it has no `details` schema, and a `{marker}` in its message fails generation: there would be nothing to fill it. An error that needs typed details or markers stays a class.
+- A case has no properties, so it has no `details` schema, and a `{marker}` in its message, or an empty message, fails generation: there would be nothing to fill it. An error that needs typed details or markers stays a class.
 - A duplicate code fails as it always has, naming both sources whether they are classes or cases.
 
 A case is used wherever an error class is, and the two mix freely:
@@ -674,21 +692,25 @@ The `data` key suits apps whose success and error responses share one envelope. 
 For each error the operations reference, the generator emits:
 
 - **`InsufficientBalanceError`**: the details schema, built from the class's non-envelope properties. Omitted when there are none.
-- **`InsufficientBalanceErrorBody`**: the error object. `message` carries `MESSAGE` as its `example`, `code` is an enum of the one code, `template` is `MESSAGE` verbatim, `params` documents its markers when it has any, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message`, `code` and `template` are required.
+- **`InsufficientBalanceErrorBody`**: the error object. `message` carries `template()` as its `example`, `code` is an enum of the one code, `template` is `template()` verbatim, `params` documents its markers when it has any, `details` references the details schema, and `#[EnvelopeField]` properties follow. `message`, `code` and `template` are required.
 - **`InsufficientBalanceErrorResponse`**: the envelope. `status` is always false, `data` is an always-empty array unless you drop it, and `error` references the body. `status` and `error` are required.
 - **`components.responses.InsufficientBalanceError`**: a reusable response with `application/json` content and an `x-http-status` extension.
-- **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and `MESSAGE`. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
+- **`ErrorCode`**: one string enum of the referenced codes, whose description lists each code with its HTTP status and message. It survives [pruning](#clean-output-automatic-pruning) as the error-codes reference page even though nothing references it directly.
 
 #### Message templates
 
-`MESSAGE` is source text that may contain `{marker}` placeholders, so a client can translate it and then fill in the values:
+`template()` returns source text that may contain `{marker}` placeholders, so a client can translate it and then fill in the values:
 
 ```php
 class PlanLimitError extends ApiError
 {
     public const CODE = 'plan_limit_reached';
-    public const MESSAGE = 'Your plan allows up to {limit} projects.';
     public const STATUS = 402;
+
+    public static function template(): string
+    {
+        return 'Your plan allows up to {limit} projects.';
+    }
 
     public function __construct(
         #[Example(5)]
@@ -699,8 +721,8 @@ class PlanLimitError extends ApiError
 
 A marker is a lowercase name in braces, such as `{limit}` or `{plan_name}`, and it must name a public property of the class. Generation fails otherwise, naming the class and the marker. The error body then carries:
 
-- **`template`**: `MESSAGE` verbatim, the source text a client translates. Always present.
-- **`params`**: an object with one property per marker, each documented like any DTO property from the same-named class property, including its type, `#[Description]` and `#[Example]`. Required when `MESSAGE` has markers, and omitted when it has none.
+- **`template`**: `template()` verbatim, the source text a client translates. Always present.
+- **`params`**: an object with one property per marker, each documented like any DTO property from the same-named class property, including its type, `#[Description]` and `#[Example]`. Required when the template has markers, and omitted when it has none.
 - **`message`**: the source text with the values filled in. Its example substitutes each marker's `#[Example]` value; a marker without one stays as written.
 
 ```json
@@ -715,7 +737,7 @@ A marker is a lowercase name in braces, such as `{limit}` or `{plan_name}`, and 
 
 Set `error_fields.template` or `error_fields.params` to `null` to leave either out.
 
-Every error response's description carries ``` `code`: MESSAGE ```, e.g. ``` `too_many_requests`: Too many requests. Please try again later. ``` A status with one error shows that single line; a status several errors share shows the same lines under a `Possible errors:` header.
+Every error response's description carries ``` `code`: message ```, e.g. ``` `too_many_requests`: Too many requests. Please try again later. ``` A status with one error shows that single line; a status several errors share shows the same lines under a `Possible errors:` header.
 
 **Only referenced errors are documented.** An error no operation can return is an internal failure mode, not API surface. Its schemas and response are left out whether or not `prune_unused_components` is on, and the `ErrorCode` enum lists exactly the errors that remain, so each documentation set publishes an honest code list. An error counts as referenced when an operation reaches it through `#[Throws]`, `implied_errors`, or a hand-written `$ref`. With pruning off, a schema you keep that references an error keeps that error too, so no reference is ever left dangling.
 
@@ -727,8 +749,12 @@ A validation error typically lifts its field map into the error object:
 class ValidationFailedError extends ApiError
 {
     public const CODE = 'validation_failed';
-    public const MESSAGE = 'The given data was invalid';
     public const STATUS = 422;
+
+    public static function template(): string
+    {
+        return 'The given data was invalid';
+    }
 
     public function __construct(
         /** @var array<string, string[]> */
@@ -849,7 +875,7 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | One | `$ref` to `#/components/responses/{Name}` |
 | Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. The media type also carries one named example per error, keyed by its code. |
 
-**Every possible body is shown.** A `oneOf` alone renders as a single synthesized body, which reads as though it were the only answer a client can get. So a shared status also carries one example per error, keyed by its code and ordered as the list above it, and a renderer that supports multiple examples offers a switcher between them. Each entry's `summary` is the bare code, for the switcher's list, and its `description` repeats that error's `` `code`: MESSAGE `` line, so a renderer showing example metadata says which error is on screen. Each example is a whole response body, built from the examples the error's own schemas advertise: the filled message, the code, the template and its typed details. An array property becomes a one-item list from its items' example, which is where a scalar `#[Example]` on an array sits. A property with no example anywhere is left out rather than invented, so a field your app owns never shows made-up content.
+**Every possible body is shown.** A `oneOf` alone renders as a single synthesized body, which reads as though it were the only answer a client can get. So a shared status also carries one example per error, keyed by its code and ordered as the list above it, and a renderer that supports multiple examples offers a switcher between them. Each entry's `summary` is the bare code, for the switcher's list, and its `description` repeats that error's `` `code`: message `` line, so a renderer showing example metadata says which error is on screen. Each example is a whole response body, built from the examples the error's own schemas advertise: the filled message, the code, the template and its typed details. An array property becomes a one-item list from its items' example, which is where a scalar `#[Example]` on an array sits. A property with no example anywhere is left out rather than invented, so a field your app owns never shows made-up content.
 
 A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]`, `implied_errors` or a rule names a class that is not a documented error: not a concrete subclass of `errors.base_class`, or never scanned. The message says which.
 

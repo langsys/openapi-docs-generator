@@ -178,48 +178,90 @@ it('enforces the error case contract before anything is written', function (stri
         'enum NoAttributeErrors: string implements ErrorCatalog
 {
     case Missing = "missing_attribute";
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::Missing => "m",
+        };
+    }
 }',
-        'NoAttributeErrors::Missing must carry #[ErrorCase(status: …, message: …)]',
+        'NoAttributeErrors::Missing must carry #[ErrorCase(status: …)]',
     ],
     'enum not backed by string' => [
         'enum IntBackedErrors: int implements ErrorCatalog
 {
-    #[ErrorCase(status: 409, message: "m")]
+    #[ErrorCase(status: 409)]
     case One = 1;
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::One => "m",
+        };
+    }
 }',
         'must be a string-backed enum whose backing value is the error code; got int',
     ],
     'marker in a case message' => [
         'enum MarkerErrors: string implements ErrorCatalog
 {
-    #[ErrorCase(status: 422, message: "Up to {limit} items")]
+    #[ErrorCase(status: 422)]
     case TooMany = "too_many";
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::TooMany => "Up to {limit} items",
+        };
+    }
 }',
         'uses the marker {limit}, but an enum case has no properties to fill it',
     ],
     'status outside the HTTP range' => [
         'enum BadStatusErrors: string implements ErrorCatalog
 {
-    #[ErrorCase(status: 42, message: "m")]
+    #[ErrorCase(status: 42)]
     case Bad = "bad_status";
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::Bad => "m",
+        };
+    }
 }',
         'must be an HTTP status code between 100 and 599',
     ],
     'empty message' => [
         'enum EmptyMessageErrors: string implements ErrorCatalog
 {
-    #[ErrorCase(status: 409, message: "")]
+    #[ErrorCase(status: 409)]
     case Empty = "empty_message";
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::Empty => "",
+        };
+    }
 }',
-        'message on ErrorCatalogFixture',
+        'template() of ErrorCatalogFixture',
     ],
 ]);
 
 it('reports a duplicate code across a class and a case, naming both', function () {
     $dir = catalogTempDir('enum DuplicateOfClassErrors: string implements ErrorCatalog
 {
-    #[ErrorCase(status: 409, message: "The plan cycle is already that one.")]
+    #[ErrorCase(status: 409)]
     case Dupe = "plan_cycle_already_set_class";
+
+    public function template(): string
+    {
+        return match ($this) {
+            self::Dupe => "The plan cycle is already that one.",
+        };
+    }
 }');
 
     try {
