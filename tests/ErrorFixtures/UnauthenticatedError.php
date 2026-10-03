@@ -6,7 +6,7 @@ namespace Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures;
 class UnauthenticatedError extends BaseAuthError
 {
     public const CODE = 'unauthenticated';
-    public static function template(): string
+    public function template(): string
     {
         return 'Unauthenticated';
     }

@@ -132,7 +132,7 @@ return [
         // declares its identity with class constants:
         //   public const CODE = 'not_found';             // declared by the class itself
         //   public const STATUS = 404;                   // int or int-backed enum; may be inherited
-        //   public static function template(): string    // declared by the class itself; the message
+        //   public function template(): string           // declared by the class itself; the message
         //   {                                            // in the source language, and the docs text
         //       return 'Resource not found';
         //   }

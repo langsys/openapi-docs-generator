@@ -568,7 +568,7 @@ Document machine-readable API errors from Spatie Data classes, one class per fai
 
 ### The Error Class Contract
 
-An error class declares its identity with two constants and one static method:
+An error class declares its identity with two constants and one method:
 
 ```php
 abstract class ApiError extends Data {}
@@ -578,7 +578,7 @@ class NotFoundError extends ApiError
     public const CODE = 'not_found';
     public const STATUS = 404;          // or an int-backed enum case, e.g. HttpCode::NOT_FOUND
 
-    public static function template(): string
+    public function template(): string
     {
         return 'Resource not found';
     }
@@ -589,7 +589,7 @@ class ProjectNotFoundError extends NotFoundError
     public const CODE = 'project_not_found';
     // STATUS is inherited from NotFoundError
 
-    public static function template(): string
+    public function template(): string
     {
         return 'No project with that id';
     }
@@ -599,7 +599,7 @@ class ProjectNotFoundError extends NotFoundError
 | Member | Type | Rule |
 |---|---|---|
 | `CODE` | string constant | The slug clients branch on. Every concrete error class declares its own. |
-| `template()` | public static method returning a string | The message in the source language, and the documentation text. Every concrete error class declares its own. May contain [`{marker}` placeholders](#message-templates). |
+| `template()` | public method returning a string | The message in the source language, and the documentation text. Every concrete error class declares its own. The generator calls it on an instance created without its constructor, so it must not depend on the error's data: it may contain [`{marker}` placeholders](#message-templates), which the error's properties fill. |
 | `STATUS` | int, or an int-backed enum, constant | The HTTP status. May be inherited, which is what a specific error's parent is for. |
 
 The message is a method, not a constant, so an app writes it the way it writes any other text it shows — in Laravel, as `__('No project with that id')`, which a translation tool can find and a translation package can serve. The generator only reads the string it returns.
@@ -608,7 +608,7 @@ Typed class constants such as `public const string CODE` work too, on PHP 8.3 an
 
 Constants and methods inherit silently, so a subclass that forgot to redeclare `CODE` or `template()` would share its parent's without anyone noticing. Generation therefore fails, before anything is written, when:
 
-- a concrete error class inherits `CODE` or `template()` instead of declaring it, or its `template()` is not public and static, or returns an empty string;
+- a concrete error class inherits `CODE` or `template()` instead of declaring it, or its `template()` is not public, or returns an empty string;
 - two error classes declare the same `CODE`;
 - no `STATUS` can be resolved, or it is not an HTTP status between 100 and 599;
 - an error class carries a class-level `#[Description]`, because `template()` already documents it;
@@ -707,7 +707,7 @@ class PlanLimitError extends ApiError
     public const CODE = 'plan_limit_reached';
     public const STATUS = 402;
 
-    public static function template(): string
+    public function template(): string
     {
         return 'Your plan allows up to {limit} projects.';
     }
@@ -751,7 +751,7 @@ class ValidationFailedError extends ApiError
     public const CODE = 'validation_failed';
     public const STATUS = 422;
 
-    public static function template(): string
+    public function template(): string
     {
         return 'The given data was invalid';
     }

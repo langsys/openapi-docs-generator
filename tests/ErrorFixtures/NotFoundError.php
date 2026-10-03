@@ -6,7 +6,7 @@ namespace Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures;
 class NotFoundError extends ApiError
 {
     public const CODE = 'not_found';
-    public static function template(): string
+    public function template(): string
     {
         return 'Resource not found';
     }

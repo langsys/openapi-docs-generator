@@ -9,7 +9,7 @@ use Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\ApiError;
 class AccountOwnsOrganizationsError extends ApiError
 {
     public const CODE = 'account_owns_organizations';
-    public static function template(): string
+    public function template(): string
     {
         return 'Transfer or delete every organization you own before deleting your account.';
     }

@@ -9,7 +9,7 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\EnvelopeField;
 class ValidationError extends ApiError
 {
     public const CODE = 'validation_failed';
-    public static function template(): string
+    public function template(): string
     {
         return 'One or more request fields failed validation.';
     }

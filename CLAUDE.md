@@ -97,37 +97,40 @@ Custom attributes applied to Data class properties to control schema output:
 - `#[OneOfItemsFrom("group")]` — Property-level on an `array`. Emits `array<oneOf<{Variant}Item>>` where each `{Variant}Item` wraps the variant as `{ type, data }`. Abstract Data subclasses are skipped from auto-schema generation.
 - `#[EnvelopeField]` — Property-level on an error DTO: emit at the top level of the `error` object instead of under `details`.
 - `#[Throws(...errors)]` — Method-level on controller actions, or class-level to cover every action of a controller: the errors it can return, as class strings or `ErrorCatalog` cases, mixed freely.
-- `#[ErrorCase(status, message)]` — Case-level on an `ErrorCatalog` enum: the status (int or int-backed enum) and message of an error declared as a case.
+- `#[ErrorCase(status)]` — Case-level on an `ErrorCatalog` enum: the status (int or int-backed enum) of an error declared as a case; the enum's `template()` returns its message.
 - Error identity (code, message, status) is **not** an attribute: see **Error Class Contract**. `#[Description]` is property-level only; a class-level one on an error class fails generation.
 
 ### Error Class Contract
 
-API errors are Spatie Data classes identified by **class constants**, not attributes (there is no `#[ErrorCode]` or `#[HttpStatus]`). Discovery: every non-abstract subclass of `errors.base_class` (a class name or a list; `null` disables errors) found in the scanned directories (`paths.annotations` plus `errors.paths`). Read and validated by `Generators\ErrorContract`.
+API errors are Spatie Data classes identified by **class constants and a `template()` method**, not attributes (there is no `#[ErrorCode]` or `#[HttpStatus]`). Discovery: every non-abstract subclass of `errors.base_class` (a class name or a list; `null` disables errors) found in the scanned directories (`paths.annotations` plus `errors.paths`). Read and validated by `Generators\ErrorContract`.
 
 ```php
 class NotFoundError extends ApiError            // abstract ApiError extends Spatie Data
 {
     public const string CODE = 'not_found';
-    public const string MESSAGE = 'Resource not found';
     public const HttpCode STATUS = HttpCode::NOT_FOUND;   // int, or int-backed enum
+
+    public function template(): string { return __('Resource not found'); }
 }
 
 class BreakerNotFoundError extends NotFoundError  // a specific failure mode
 {
     public const string CODE = 'breaker_not_found';
-    public const string MESSAGE = 'No breaker row for that fingerprint';
     // STATUS inherited from NotFoundError
+
+    public function template(): string { return __('No breaker row for that fingerprint'); }
 }
 ```
 (Typed constants need PHP 8.3; untyped `public const CODE = …` works on 8.1. Test fixtures use untyped.)
 
-- `CODE` and `MESSAGE` are non-empty strings that each concrete error class **declares itself**: `ReflectionClassConstant::getDeclaringClass()` must be the class. Constants inherit silently, so this is the guard that stops two failure modes sharing a code.
+- `CODE` (constant) and `template()` (method) are non-empty strings that each concrete error class **declares itself**: the constant's and the method's declaring class must be the class. Constants and methods inherit silently, so this is the guard that stops two failure modes sharing a code or a message.
+- `template()` is a public instance method returning the source-language message (a method so an app can write it with `__()`). `ErrorContract` calls it on `ReflectionClass::newInstanceWithoutConstructor()`, so the message never depends on the error's data and constructor arguments are never needed; markers carry the data. Below, `MESSAGE` means the string `template()` returns.
 - `STATUS` is an int or an int-backed enum (read via `->value`), HTTP 100–599, and may be inherited from any parent, abstract or concrete. That is the point of descendants.
 - `MESSAGE` is also the documentation text: the `{Name}Body.message` example, each `ErrorCode` enum line, and every error response description, which carries ``` `code`: MESSAGE ``` via `ErrorDefinition::codeAndMessage()`. That line alone is `components.responses.{Name}.description`; on a shared status the same lines are listed under `Possible errors:`. A class-level `#[Description]` on an error class or its parents is rejected, not ignored, so the same sentence is never written twice.
 - **Message templates.** `MESSAGE` may contain `{marker}` placeholders (`ErrorContract::MARKER_PATTERN`, `/\{([a-z][a-z0-9_]*)\}/`). Each must name a public, non-static property of the class; `ErrorContract::read()` returns them as `markers`. `{Name}Body` gets `template` (`MESSAGE` verbatim, required) and `params` (an object of the marker properties, built like DTO properties, required, omitted when `MESSAGE` has no markers). The `message` example substitutes each marker's `#[Example]` value. `errors.error_fields.template`/`params` rename them, or omit them with `null`.
-- Hard failures (`OpenApiDocsException`, before writing): a `MESSAGE` `{marker}` naming no public property, a missing or inherited `CODE`/`MESSAGE`, an empty value, a duplicate `CODE`, an unresolvable or out-of-range `STATUS`, a class-level `#[Description]`, an `#[EnvelopeField]` reusing an error-object field name, and a non-existent or non-Data `errors.base_class`.
+- Hard failures (`OpenApiDocsException`, before writing): a `MESSAGE` `{marker}` naming no public property, a missing or inherited `CODE`/`template()`, a non-public `template()`, an empty value, a duplicate `CODE`, an unresolvable or out-of-range `STATUS`, a class-level `#[Description]`, an `#[EnvelopeField]` reusing an error-object field name, and a non-existent or non-Data `errors.base_class`.
 - Unchanged by the contract: `#[Throws]`, `#[EnvelopeField]`, property-level `#[Description]`, `implied_errors`, rules, and the envelope shape (`ErrorEnvelope`).
-- **Error catalogs.** A plain error (code, message, status, no details) may be a case of a string-backed enum implementing `Contracts\ErrorCatalog` instead of a class: the backing value is the CODE, `#[ErrorCase(status, message)]` carries the rest, and discovery needs no config. Schema names are `Str::studly(case) . errors.case_suffix` (default `Error`), so a case and a class of the same name produce identical schemas, envelopes, description lines and shared-status `oneOf` entries. A case has no properties, so no details schema, and a `{marker}` in its message fails (nothing could fill it). `ErrorDefinition::$case` records it, `identifier()` renders `Enum::Case`, and a duplicate code names both sources.
+- **Error catalogs.** A plain error (code, message, status, no details) may be a case of a string-backed enum implementing `Contracts\ErrorCatalog` instead of a class: the backing value is the CODE, `#[ErrorCase(status)]` carries the status, the enum's `template()` (required by `ErrorCatalog`) returns each case's message, and discovery needs no config. Schema names are `Str::studly(case) . errors.case_suffix` (default `Error`), so a case and a class of the same name produce identical schemas, envelopes, description lines and shared-status `oneOf` entries. A case has no properties, so no details schema, and a `{marker}` in its message fails (nothing could fill it). `ErrorDefinition::$case` records it, `identifier()` renders `Enum::Case`, and a duplicate code names both sources.
 - **Scoping.** Only errors the documentation set's operations reference are documented (`OpenApiGenerator::scopeErrorsToOperations()`), independent of `prune_unused_components`. So internal errors, such as those of super-admin-only routes, never leak into a set's spec, and each set's `ErrorCode` list is honest. With pruning off, kept non-error components also count as roots, so a kept schema that references an error keeps it.
 
 ### Endpoint Parameter Enrichment
@@ -144,7 +147,7 @@ class BreakerNotFoundError extends NotFoundError  // a specific failure mode
 
 ### Testing
 
-Tests use Pest with Orchestra Testbench (298 tests, 879 assertions).
+Tests use Pest with Orchestra Testbench (301 tests, 884 assertions).
 
 | Test File | What It Covers |
 |---|---|
@@ -163,7 +166,7 @@ Tests use Pest with Orchestra Testbench (298 tests, 879 assertions).
 | `tests/Unit/ComponentTagPrunerTest.php` | Transitive `$ref` closure (incl. cycle pruning), security-scheme pruning, tag object+order preservation |
 | `tests/Unit/ErrorAttributesTest.php` | `Throws` (method + class, variadic), `EnvelopeField`, attribute targets (no class-level `Description`), `ErrorCode`/`HttpStatus` removed |
 | `tests/Unit/ErrorCatalogTest.php` | Enum-case errors: discovery with no config, a case and the equivalent class generating identical schemas, the case suffix, non-catalog enums ignored, case-contract failures (missing `#[ErrorCase]`, non-string backing, marker, out-of-range status, empty message), duplicate code across a class and a case, mixed `#[Throws]` sharing a status, a non-catalog case rejected, `keyFor()` |
-| `tests/Unit/ErrorSchemaBuilderTest.php` | Base-class discovery, constant reading (int/enum `STATUS`, inheritance from abstract and concrete parents), contract violations generated into temp dirs (missing/inherited/empty `CODE`/`MESSAGE`, `STATUS`, class `Description`, duplicate code, envelope-field collision), base-class validation, details/Body/Response shapes, `buildErrorCodeSchema()` subsets, field config + validation, `errors.paths`, message templates (`template`/`params` from `{marker}`s, filled `message` example, marker without a public property, `template`/`params` envelope-field collisions, null omission) |
+| `tests/Unit/ErrorSchemaBuilderTest.php` | Base-class discovery, constant reading (int/enum `STATUS`, inheritance from abstract and concrete parents), contract violations generated into temp dirs (missing/inherited/empty `CODE`/`template()`, non-public `template()`, `template()` read without running the constructor, `STATUS`, class `Description`, duplicate code, envelope-field collision), base-class validation, details/Body/Response shapes, `buildErrorCodeSchema()` subsets, field config + validation, `errors.paths`, message templates (`template`/`params` from `{marker}`s, filled `message` example, marker without a public property, `template`/`params` envelope-field collisions, null omission) |
 | `tests/Integration/ErrorResponsesTest.php` | `components.responses.{Name}` (`MESSAGE` description, `x-http-status`), hand-written `ref` resolves under strict validation, `ErrorCode` lists only referenced codes, unreferenced error components removed even with pruning off |
 | `tests/Unit/OperationErrorAttacherTest.php` | Shared-status examples (one per error, keyed/ordered by code, whole envelope values from the Body/details schemas, app-owned envelope field omitted, definition-only fallback, none on single-error responses, wrapper label), Validation scenarios (inline response + description lines, nested dotted and fieldless fields, exact-triple dedupe keeping one code with different messages, shared status, hand-written precedence, missing `validation` config, wrong return type, descriptor forms, `ValidationScenario` validation), `$ref` vs `error`-level `oneOf`+discriminator (incl. configured field names), annotation precedence, middleware/validation/not-found rules, dedupe, class-level `Throws`, no-resolver and no-context cases, both failure messages, custom `ImpliedErrorRule` descriptors + contract errors, rules and the validation check using the matched route's action when the annotation sits on a helper |
 | `tests/Integration/OperationErrorAttachmentTest.php` | End-to-end attachment: single/shared status, hand-written precedence, pruning keeps attached refs, middleware + structural rules, no-resolver, error scoping with pruning off (honest code list, ordinary DTOs kept, a kept schema keeps the error it references) |

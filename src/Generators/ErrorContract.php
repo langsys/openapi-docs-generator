@@ -20,7 +20,7 @@ use Spatie\LaravelData\Data;
  *       public const CODE = 'not_found';
  *       public const STATUS = 404;                  // or an int-backed enum case
  *
- *       public static function template(): string
+ *       public function template(): string
  *       {
  *           return 'Resource not found';
  *       }
@@ -31,7 +31,7 @@ use Spatie\LaravelData\Data;
  *       public const CODE = 'project_not_found';
  *       // STATUS inherited
  *
- *       public static function template(): string
+ *       public function template(): string
  *       {
  *           return 'No project with that id';
  *       }
@@ -43,7 +43,8 @@ use Spatie\LaravelData\Data;
  * indistinguishable. STATUS may be inherited, since sharing a status is what a
  * specific error's parent is for. template() returns the source-language message; it
  * is a method rather than a constant so an app can write it through its framework's
- * translate function. It doubles as the documentation text, so a class-level
+ * translate function. It is read on an instance created without its constructor, so
+ * the message never depends on an error's data: markers are filled from properties. It doubles as the documentation text, so a class-level
  * #[Description] is rejected rather than silently ignored. It may contain `{marker}`
  * placeholders, and each must name a public property of the class, which fills it.
  */
@@ -260,7 +261,8 @@ final class ErrorContract
     }
 
     /**
-     * The class's own public static template(), called: the source-language message.
+     * The class's own public template(), called on an instance created without its
+     * constructor: the source-language message, independent of any error's data.
      *
      * @throws OpenApiDocsException
      */
@@ -268,7 +270,7 @@ final class ErrorContract
     {
         if (! $class->hasMethod('template')) {
             throw new OpenApiDocsException(sprintf(
-                '%s must declare public static function template(): string: every concrete error class declares its own CODE and template().',
+                '%s must declare public function template(): string: every concrete error class declares its own CODE and template().',
                 $class->getName(),
             ));
         }
@@ -286,14 +288,14 @@ final class ErrorContract
             ));
         }
 
-        if (! $method->isPublic() || ! $method->isStatic()) {
+        if (! $method->isPublic()) {
             throw new OpenApiDocsException(sprintf(
-                '%s::template() must be public and static: the documentation reads it without an instance.',
+                '%s::template() must be public: the documentation calls it on an instance created without its constructor.',
                 $class->getName(),
             ));
         }
 
-        $value = $method->invoke(null);
+        $value = $method->invoke($class->newInstanceWithoutConstructor());
 
         if (! is_string($value) || $value === '') {
             throw new OpenApiDocsException(sprintf('%s::template() must return a non-empty string.', $class->getName()));

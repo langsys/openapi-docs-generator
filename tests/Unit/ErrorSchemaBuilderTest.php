@@ -159,7 +159,7 @@ it('enforces the error class contract before anything is written', function (str
     'CODE missing' => [
         'class NoCodeError extends ApiError
 {
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'NoCodeError must declare const CODE',
@@ -167,7 +167,7 @@ it('enforces the error class contract before anything is written', function (str
     'CODE inherited' => [
         'class InheritsCodeError extends NotFoundError
 {
-    public static function template(): string { return "A more specific not found"; }
+    public function template(): string { return "A more specific not found"; }
 }',
         'InheritsCodeError inherits CODE from Langsys\OpenApiDocsGenerator\Tests\ErrorFixtures\NotFoundError',
     ],
@@ -184,22 +184,22 @@ it('enforces the error class contract before anything is written', function (str
     public const CODE = "no_template";
     public const STATUS = 400;
 }',
-        'NoTemplateError must declare public static function template(): string',
+        'NoTemplateError must declare public function template(): string',
     ],
-    'template() not static' => [
-        'class InstanceTemplateError extends ApiError
+    'template() not public' => [
+        'class ProtectedTemplateError extends ApiError
 {
-    public const CODE = "instance_template";
+    public const CODE = "protected_template";
     public const STATUS = 400;
-    public function template(): string { return "m"; }
+    protected function template(): string { return "m"; }
 }',
-        'InstanceTemplateError::template() must be public and static',
+        'ProtectedTemplateError::template() must be public',
     ],
     'CODE empty' => [
         'class EmptyCodeError extends ApiError
 {
     public const CODE = "";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'EmptyCodeError::CODE must be a non-empty string',
@@ -208,7 +208,7 @@ it('enforces the error class contract before anything is written', function (str
         'class NoStatusError extends ApiError
 {
     public const CODE = "no_status";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
 }',
         'NoStatusError has no STATUS constant',
     ],
@@ -216,7 +216,7 @@ it('enforces the error class contract before anything is written', function (str
         'class BadStatusError extends ApiError
 {
     public const CODE = "bad_status";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 42;
 }',
         'BadStatusError::STATUS must be an HTTP status code',
@@ -226,7 +226,7 @@ it('enforces the error class contract before anything is written', function (str
 class DescribedError extends ApiError
 {
     public const CODE = "described";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 }',
         'DescribedError has a class-level #[Description]',
@@ -235,7 +235,7 @@ class DescribedError extends ApiError
         'class CollidingError extends ApiError
 {
     public const CODE = "colliding";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -249,7 +249,7 @@ class DescribedError extends ApiError
         'class TemplateCollisionError extends ApiError
 {
     public const CODE = "template_collision";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -263,7 +263,7 @@ class DescribedError extends ApiError
         'class ParamsCollisionError extends ApiError
 {
     public const CODE = "params_collision";
-    public static function template(): string { return "m"; }
+    public function template(): string { return "m"; }
     public const STATUS = 400;
 
     public function __construct(
@@ -277,7 +277,7 @@ class DescribedError extends ApiError
         'class UnfilledMarkerError extends ApiError
 {
     public const CODE = "unfilled_marker";
-    public static function template(): string { return "Up to {limit} items"; }
+    public function template(): string { return "Up to {limit} items"; }
     public const STATUS = 422;
 }',
         'UnfilledMarkerError::template() uses the marker {limit}, but UnfilledMarkerError has no public property $limit',
@@ -286,7 +286,7 @@ class DescribedError extends ApiError
         'class PrivateMarkerError extends ApiError
 {
     public const CODE = "private_marker";
-    public static function template(): string { return "Up to {limit} items"; }
+    public function template(): string { return "Up to {limit} items"; }
     public const STATUS = 422;
 
     private int $limit = 3;
@@ -299,13 +299,36 @@ it('rejects two error classes declaring the same CODE', function () {
     $dir = errorClassDir('class DuplicateCodeError extends ApiError
 {
     public const CODE = "not_found";
-    public static function template(): string { return "Also not found"; }
+    public function template(): string { return "Also not found"; }
     public const STATUS = 404;
 }');
 
     try {
         expect(fn () => makeErrorBuilder([], [$dir, errorFixturesDir()])->buildAll())
             ->toThrow(OpenApiDocsException::class, "Duplicate error code 'not_found'");
+    } finally {
+        removeErrorClassDir($dir);
+    }
+});
+
+it('reads template() on an instance created without its constructor', function () {
+    $dir = errorClassDir('class ConstructedError extends ApiError
+{
+    public const CODE = "constructed";
+    public const STATUS = 409;
+
+    public function __construct(public string $name)
+    {
+        throw new \LogicException("the constructor must not run");
+    }
+
+    public function template(): string { return "Conflict on {name}"; }
+}');
+
+    try {
+        $definitions = definitionsByCode(makeErrorBuilder([], $dir));
+
+        expect($definitions['constructed']->message)->toBe('Conflict on {name}');
     } finally {
         removeErrorClassDir($dir);
     }
@@ -463,7 +486,7 @@ it('documents params from MESSAGE markers using the same-named public properties
     $dir = errorClassDir('class PlanLimitError extends ApiError
 {
     public const CODE = "plan_limit";
-    public static function template(): string { return "Your {plan} plan allows up to {limit} projects."; }
+    public function template(): string { return "Your {plan} plan allows up to {limit} projects."; }
     public const STATUS = 402;
 
     public function __construct(
@@ -503,7 +526,7 @@ it('omits template and params when their names are null, and still fills the mes
     $dir = errorClassDir('class QuietPlanLimitError extends ApiError
 {
     public const CODE = "quiet_plan_limit";
-    public static function template(): string { return "Up to {limit} projects."; }
+    public function template(): string { return "Up to {limit} projects."; }
     public const STATUS = 402;
 
     public function __construct(
