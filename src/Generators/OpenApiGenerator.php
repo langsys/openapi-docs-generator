@@ -57,6 +57,7 @@ class OpenApiGenerator
         private string $validateRefs = 'off',
         private ?array $infoOverride = null,
         private ?OperationErrorAttacher $errorAttacher = null,
+        private ?QueryParameterAttacher $queryParameterAttacher = null,
     ) {}
 
     /** Name of the error-code enum added by scopeErrorsToOperations(); kept as a prune root. */
@@ -95,6 +96,7 @@ class OpenApiGenerator
         $this->applySecurityOverride();
         $this->buildAndMergeDtoSchemas();
         $this->attachOperationErrors();
+        $this->attachQueryParameters();
         $this->enrichEndpointParameters();
         $this->scopeErrorsToOperations();
         $this->pruneComponentsAndTags();
@@ -374,6 +376,19 @@ class OpenApiGenerator
             $this->dtoSchemaBuilder->getErrorEnvelope(),
             $this->dtoSchemaBuilder->getErrorContract(),
         );
+    }
+
+    /**
+     * Document query parameters from the #[QueryParameters] Data class each action takes.
+     *
+     * Runs before enrichEndpointParameters(), so the `$ref`s it adds to shared
+     * components are replaced per endpoint like hand-written ones.
+     *
+     * @throws OpenApiDocsException when an operation documents one of them by hand.
+     */
+    private function attachQueryParameters(): void
+    {
+        $this->queryParameterAttacher?->attach($this->openApi);
     }
 
     /**

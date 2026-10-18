@@ -24,7 +24,6 @@ use Psr\Log\LoggerInterface;
 use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionUnionType;
-use Spatie\LaravelData\Data;
 
 /**
  * Attaches documented error responses to operations, so the same 401/422/404
@@ -174,7 +173,7 @@ class OperationErrorAttacher
         $annotatedAction = OperationAction::fromOperation($operation);
         $annotated = OperationAction::reflect($annotatedAction);
         $route = $this->resolveRoute($method, $path, $annotatedAction);
-        $action = $this->actionFor($annotated, $annotatedAction, $route);
+        $action = OperationAction::handler($annotated, $annotatedAction, $route);
 
         $context = new OperationContext(
             operation: $operation,
@@ -355,23 +354,6 @@ class OperationErrorAttacher
     }
 
     /**
-     * The method that actually handles the operation. Normally the annotated method,
-     * but an @OA annotation can sit on a helper rather than on the route's action; when
-     * the matched route names a different, reflectable controller action, that action
-     * is the one rules and structural checks must inspect.
-     */
-    private function actionFor(?ReflectionMethod $annotated, ?string $annotatedAction, ?ResolvedRoute $route): ?ReflectionMethod
-    {
-        $routeAction = $route?->action();
-
-        if ($routeAction === null || $routeAction === $annotatedAction) {
-            return $annotated;
-        }
-
-        return OperationAction::reflect($routeAction) ?? $annotated;
-    }
-
-    /**
      * Union of the operation's declared and implied error classes, deduplicated,
      * in a stable order (declared first, then middleware, then structural, then rules).
      *
@@ -396,7 +378,7 @@ class OperationErrorAttacher
             }
         }
 
-        if ($this->validationErrors !== [] && $this->acceptsDataParameter($reflection)) {
+        if ($this->validationErrors !== [] && OperationAction::dataParameterClasses($reflection) !== []) {
             $classes = array_merge($classes, $this->validationErrors);
         }
 
@@ -511,28 +493,6 @@ class OperationErrorAttacher
         }
 
         return $classes;
-    }
-
-    /**
-     * Whether the action takes a Spatie Data parameter — i.e. the request is
-     * validated by Laravel Data, so it can fail validation.
-     */
-    private function acceptsDataParameter(?ReflectionMethod $reflection): bool
-    {
-        if ($reflection === null) {
-            return false;
-        }
-
-        foreach ($reflection->getParameters() as $parameter) {
-            foreach ($this->namedTypes($parameter->getType()) as $type) {
-                $name = $type->getName();
-                if (! $type->isBuiltin() && (is_a($name, Data::class, true))) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     /**

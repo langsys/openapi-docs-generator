@@ -14,6 +14,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [#\[Omit\]](#omit)
   - [#\[GroupedCollection\]](#groupedcollection)
   - [#\[ItemType\] / #\[OneOfItemsFrom\]](#itemtype--oneofitemsfrom)
+  - [#\[QueryParameters\]](#queryparameters)
 - [Supported Property Types](#supported-property-types)
   - [Enum Example](#enum-example)
   - [Nested Data Classes](#nested-data-classes)
@@ -66,6 +67,7 @@ php artisan openapi:generate
   +-- Discover error classes (subclasses of errors.base_class) -> error schemas and reusable responses
   +-- Merge DTO and error schemas into the OpenAPI model
   +-- Attach error responses to operations (#[Throws], implied_errors, rules)
+  +-- Document query parameters from the #[QueryParameters] DTO each action takes
   +-- Scope error docs to the errors operations reference (even with pruning off)
   +-- Prune components/tags nothing references (clean output)
   +-- Inject security definitions from config
@@ -269,6 +271,57 @@ class BlockContainerResource extends Data
 ```
 
 For each variant, the generator emits a wrapper schema (`ParagraphItem`, `ImageItem`) that the property's `oneOf` references. Abstract Data subclasses are skipped from auto-schema generation, so a shared `AbstractBlockResource` base will not produce its own schema.
+
+### `#[QueryParameters]`
+
+Documents an endpoint's query parameters from the Data class its controller action takes. It counts on the class or any parent, so one list base DTO covers every DTO that extends it.
+
+```php
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\QueryParameters;
+
+#[QueryParameters]
+abstract class ListRequest extends Data
+{
+    public int $page = 1;
+    public int $records_per_page = 25;
+    public string|array|null $order_by = null;
+}
+
+class ListProjectsRequest extends ListRequest
+{
+    public function __construct(
+        #[Description('Only projects in this status')]
+        public ProjectStatus $status,
+        #[Example('acme')]
+        public ?string $search = null,
+        public array $ids = [],
+    ) {}
+}
+
+class ProjectController
+{
+    #[OA\Get(path: '/api/projects', responses: [...])]
+    public function index(ListProjectsRequest $request) { … }
+}
+```
+
+An operation whose action takes `ListProjectsRequest` gets one `in: query` parameter per public property, after the parameters written by hand:
+
+- **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
+- **Required**: only when the property is non-nullable, has no default and is not `Optional`.
+- **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
+- **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it.
+- **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint. `#[Omit]` leaves a property out.
+
+**Shared parameters.** A property whose input name is the key of an `in: query` entry in `components.parameters` is emitted as a `$ref` to it, so a parameter such as `page` keeps the one definition you wrote. The `$ref` carries the component's `required`, so the property and the component must agree on it; when they don't, generation fails naming the action, the DTO and the component:
+
+```php
+#[OA\Parameter(parameter: 'page', name: 'page', in: 'query', description: 'Page to request', schema: new OA\Schema(type: 'integer'))]
+```
+
+**Never documented twice.** If an operation already documents a query parameter of the same name by hand (inline or by `$ref`, on the operation or its path item, with or without `[]`), generation fails with a message naming the action and the parameter.
+
+The action inspected is the annotated method, or the matched route's action when the `@OA` annotation sits on a different method. An action taking a Data class without the attribute gets no parameters from it.
 
 ## Supported Property Types
 

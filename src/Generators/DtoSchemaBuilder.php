@@ -24,6 +24,7 @@ use ReflectionProperty;
 use ReflectionType;
 use ReflectionUnionType;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
+use Spatie\LaravelData\Support\DataConfig;
 use Symfony\Component\Finder\Finder;
 
 class DtoSchemaBuilder
@@ -325,10 +326,13 @@ class DtoSchemaBuilder
 
     /**
      * Extract metadata from a single reflected property.
+     *
+     * @param  ReflectionNamedType|null  $memberType  One member of a union-typed property to
+     *                                                describe instead of its resolved type.
      */
-    private function extractPropertyMetadata(ReflectionProperty $property): object
+    private function extractPropertyMetadata(ReflectionProperty $property, ?ReflectionNamedType $memberType = null): object
     {
-        $type = $this->resolvePropertyType($property);
+        $type = $memberType ?? $this->resolvePropertyType($property);
         $attributes = $this->parseAttributes($property->getAttributes());
 
         $typeName = $type->getName();
@@ -876,6 +880,192 @@ class DtoSchemaBuilder
         }
 
         return new OA\Property($props);
+    }
+
+    // -------------------------------------------------------------------------
+    // Query Parameters (see #[QueryParameters])
+    // -------------------------------------------------------------------------
+
+    /**
+     * One `in: query` parameter per public property of a Data class, named by the
+     * property's input name, so the documented name is the one the request is read with.
+     *
+     * Inherited properties come first, ancestors before descendants, so the parameters a
+     * base DTO shares sit in the same place on every operation. A parameter is required
+     * only when its property is non-nullable, has no default and is not Optional. The
+     * schema is the property's type mapped as in a DTO schema, with each member of a
+     * union under `oneOf`. Description and example come from #[Description] and
+     * #[Example]; generated examples are left out, so a parameter shows an example only
+     * when its DTO declares one.
+     *
+     * @return array<int, OA\Parameter>
+     */
+    public function buildQueryParameters(string $className): array
+    {
+        $reflection = new ReflectionClass($className);
+        $inputNames = $this->inputNames($className);
+        $parameters = [];
+
+        foreach ($this->inheritedFirst($reflection) as $prop) {
+            if ($prop->isStatic()) {
+                continue;
+            }
+
+            $meta = $this->extractPropertyMetadata($prop);
+            if ($meta->omit) {
+                continue;
+            }
+
+            $type = $prop->getType();
+            $schema = $this->buildQueryParameterSchema($prop, $meta);
+
+            $props = [
+                'name' => $inputNames[$meta->name] ?? $meta->name,
+                'in' => 'query',
+                'schema' => $schema,
+            ];
+
+            if (! $type->allowsNull() && ! $meta->hasDefault && ! $this->propertyDeclaresLaravelDataOptional($prop)) {
+                $props['required'] = true;
+            }
+
+            if ($meta->description) {
+                $props['description'] = $meta->description;
+            }
+
+            if ($meta->example !== null) {
+                $example = $this->generateExample($meta);
+                $props['example'] = $schema->type === 'array' && ! is_array($example) ? [$example] : $example;
+            }
+
+            $parameters[] = new OA\Parameter($props);
+        }
+
+        return $parameters;
+    }
+
+    /**
+     * The schema of one query parameter: the property's type as a DTO schema maps it, or,
+     * for a union of several types, a `oneOf` of each member mapped the same way.
+     */
+    private function buildQueryParameterSchema(ReflectionProperty $property, object $meta): OA\Schema
+    {
+        $type = $property->getType();
+        $members = [];
+
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $member) {
+                if ($member instanceof ReflectionNamedType
+                    && $member->getName() !== 'null'
+                    && ! $this->isLaravelDataOptionalType($member)) {
+                    $members[] = $member;
+                }
+            }
+        }
+
+        if (count($members) < 2) {
+            return $this->toParameterSchema($this->buildProperty($meta));
+        }
+
+        // PHP reports union members in its own fixed order; list scalars before arrays
+        // and classes, so the single-value form reads first.
+        $rank = static fn (ReflectionNamedType $member): int => match (true) {
+            $member->getName() === 'array' => 1,
+            ! $member->isBuiltin() => 2,
+            default => 0,
+        };
+        usort($members, static fn (ReflectionNamedType $a, ReflectionNamedType $b): int => $rank($a) <=> $rank($b));
+
+        $props = [
+            'oneOf' => array_map(
+                fn (ReflectionNamedType $member): OA\Schema => $this->toParameterSchema(
+                    $this->buildProperty($this->extractPropertyMetadata($property, $member)),
+                    withDefault: false,
+                ),
+                $members,
+            ),
+        ];
+
+        if ($meta->defaultValue !== null) {
+            $props['default'] = $meta->defaultValue;
+        }
+
+        if ($type->allowsNull()) {
+            $props['nullable'] = true;
+        }
+
+        return new OA\Schema($props);
+    }
+
+    /**
+     * A built property as a parameter schema: without the fields a parameter states
+     * itself (name, description, example) and without generated item examples.
+     *
+     * @param  bool  $withDefault  False for a `oneOf` member, whose default belongs to the union.
+     */
+    private function toParameterSchema(OA\Property $property, bool $withDefault = true): OA\Schema
+    {
+        $props = [];
+
+        foreach (get_object_vars($property) as $field => $value) {
+            if ($value === OpenApiGenerator::UNDEFINED
+                || str_starts_with($field, '_')
+                || in_array($field, ['property', 'description', 'example'], true)
+                || ($field === 'default' && ! $withDefault)) {
+                continue;
+            }
+
+            $props[$field] = $value;
+        }
+
+        if (($props['items'] ?? null) instanceof OA\Items) {
+            $props['items']->example = OpenApiGenerator::UNDEFINED;
+        }
+
+        return new OA\Schema($props);
+    }
+
+    /**
+     * Each property's input name: the name a request carries it under, after the DTO's
+     * MapInputName / MapName attributes and the app's input name mapping strategy.
+     *
+     * @return array<string, string> property name => input name
+     */
+    private function inputNames(string $className): array
+    {
+        $names = [];
+
+        foreach (app(DataConfig::class)->getDataClass($className)->properties as $property) {
+            $names[$property->name] = $property->inputMappedName ?? $property->name;
+        }
+
+        return $names;
+    }
+
+    /**
+     * Public properties, inherited ones first: ancestors before descendants, each
+     * class's own in declaration order.
+     *
+     * @return ReflectionProperty[]
+     */
+    private function inheritedFirst(ReflectionClass $reflection): array
+    {
+        $depth = static function (ReflectionClass $class): int {
+            $depth = 0;
+            while ($class = $class->getParentClass()) {
+                $depth++;
+            }
+
+            return $depth;
+        };
+
+        $properties = $this->getClassProperties($reflection);
+        usort(
+            $properties,
+            static fn (ReflectionProperty $a, ReflectionProperty $b): int => $depth($a->getDeclaringClass()) <=> $depth($b->getDeclaringClass()),
+        );
+
+        return $properties;
     }
 
     // -------------------------------------------------------------------------
