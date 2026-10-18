@@ -26,6 +26,8 @@ use ReflectionType;
 use ReflectionUnionType;
 use Spatie\LaravelData\Attributes\Computed;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
+use Spatie\LaravelData\Attributes\FromRouteParameter;
+use Spatie\LaravelData\Attributes\FromRouteParameterProperty;
 use Spatie\LaravelData\Attributes\InjectsPropertyValue;
 use Spatie\LaravelData\Support\DataConfig;
 use Symfony\Component\Finder\Finder;
@@ -917,12 +919,12 @@ class DtoSchemaBuilder
         $parameters = [];
 
         foreach ($this->inheritedFirst($reflection) as $prop) {
-            if ($prop->isStatic() || $prop->getAttributes(Computed::class) !== []) {
+            if ($prop->isStatic() || $this->firstAttribute($prop, Computed::class) !== null) {
                 continue;
             }
 
-            $injected = $this->injectedValue($prop);
-            if ($injected?->shouldBeReplacedWhenPresentInPayload()) {
+            $injection = $this->injection($prop);
+            if ($injection === true) {
                 continue;
             }
 
@@ -940,7 +942,7 @@ class DtoSchemaBuilder
                 'schema' => $schema,
             ];
 
-            if ($injected === null
+            if ($injection === null
                 && ! $type->allowsNull()
                 && ! $meta->hasDefault
                 && ! $this->propertyDeclaresLaravelDataOptional($prop)) {
@@ -1070,17 +1072,39 @@ class DtoSchemaBuilder
     }
 
     /**
-     * The attribute through which laravel-data fills the property from outside the
-     * request input (#[FromRouteParameter], #[FromAuthenticatedUser], #[FromContainer]
-     * and their *Property forms), or null. Older laravel-data versions have none.
+     * Whether laravel-data fills the property from outside the request input
+     * (#[FromRouteParameter], #[FromAuthenticatedUser], #[FromContainer] and their
+     * *Property forms): true when that value replaces what the request sends, false
+     * when it yields to it, null when the property is not filled that way.
      */
-    private function injectedValue(ReflectionProperty $property): ?InjectsPropertyValue
+    private function injection(ReflectionProperty $property): ?bool
     {
-        if (! interface_exists(InjectsPropertyValue::class)) {
+        if (interface_exists(InjectsPropertyValue::class)) {
+            return $this->firstAttribute($property, InjectsPropertyValue::class)?->shouldBeReplacedWhenPresentInPayload();
+        }
+
+        // Before laravel-data 4.12 only route parameters are injected, by two unrelated
+        // attributes with the same flag.
+        foreach ([FromRouteParameter::class, FromRouteParameterProperty::class] as $class) {
+            if ($attribute = $this->firstAttribute($property, $class)) {
+                return $attribute->replaceWhenPresentInBody;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The property's first attribute that is a $class (a subclass or implementation
+     * counts), or null, also when the installed laravel-data has no such class.
+     */
+    private function firstAttribute(ReflectionProperty $property, string $class): ?object
+    {
+        if (! class_exists($class) && ! interface_exists($class)) {
             return null;
         }
 
-        $attributes = $property->getAttributes(InjectsPropertyValue::class, ReflectionAttribute::IS_INSTANCEOF);
+        $attributes = $property->getAttributes($class, ReflectionAttribute::IS_INSTANCEOF);
 
         return $attributes === [] ? null : $attributes[0]->newInstance();
     }

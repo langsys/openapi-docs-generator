@@ -312,9 +312,9 @@ An operation whose action takes `ListProjectsRequest` gets one `in: query` param
 - **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
 - **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it.
 - **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint.
-- **Left out**: a property with `#[Omit]`, a `#[Computed]` one, and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
+- **Left out**: a property with `#[Omit]`, a `#[Computed]` one (or a subclass of it), and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
 
-**Shared parameters.** A property whose input name is the key of an `in: query` entry in `components.parameters` is emitted as a `$ref` to it, so a parameter such as `page` keeps the one definition you wrote. The `$ref` carries the component's `name` and `required`, so the property and the component must agree on both; when they don't, generation fails naming the action, the DTO and the component:
+**Shared parameters.** A property whose input name is the key of an `in: query` entry in `components.parameters` is emitted as a `$ref` to it, so a parameter such as `page` keeps the one definition you wrote. The `$ref` carries the component's `name` and `required`, so they must match the property: the name exactly as the parameter is sent (`ids[]` for an array property, so PHP reads an array), and whether it is required. When they don't, generation fails naming the action, the DTO and the component:
 
 ```php
 #[OA\Parameter(parameter: 'page', name: 'page', in: 'query', description: 'Page to request', schema: new OA\Schema(type: 'integer'))]

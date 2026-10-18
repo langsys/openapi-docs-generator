@@ -242,6 +242,13 @@ describe('parameters from a marked DTO', function () {
             ->and(qpParameters($operation))->not->toHaveKey('range.from');
     });
 
+    test('a property with a subclass of #[Computed] is left out too', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+
+        expect(qpParameters($operation))->not->toHaveKey('summary');
+    });
+
     test('computed and injected properties are left out, one that yields to the request is optional', function () {
         $operation = qpOperation('filtered');
         qpAttacher()->attach(qpDocument($operation));
@@ -338,11 +345,28 @@ describe('a $ref to a component that disagrees', function () {
         expect(fn () => qpAttacher()->attach(qpDocument($operation, [qpComponent('search', wireName: 'q')])))->toThrow(
             OpenApiDocsException::class,
             "Query parameter 'search' of " . QueryParametersController::class . '@duplicated (GET /api/things) is read by '
-            . ListProjectsRequest::class . ", but #/components/parameters/search is named 'q'; make them agree.",
+            . ListProjectsRequest::class . " as 'search', but #/components/parameters/search is named 'q'; make them agree.",
         );
     });
 
-    test('on the name only by the [] suffix is fine', function () {
+    test('on the [] suffix fails, which decides whether PHP reads an array', function () {
+        $operation = qpOperation('duplicated');
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation, [qpComponent('ids')])))
+            ->toThrow(OpenApiDocsException::class, "as 'ids[]', but #/components/parameters/ids is named 'ids';")
+            ->and(fn () => qpAttacher()->attach(qpDocument(qpOperation('duplicated'), [qpComponent('search', wireName: 'search[]')])))
+            ->toThrow(OpenApiDocsException::class, "as 'search', but #/components/parameters/search is named 'search[]';");
+    });
+
+    test('by having no name fails', function () {
+        $operation = qpOperation('duplicated');
+        $component = new OA\Parameter(['parameter' => 'search', 'in' => 'query', 'schema' => new OA\Schema(['type' => 'string'])]);
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation, [$component])))
+            ->toThrow(OpenApiDocsException::class, "as 'search', but #/components/parameters/search has no name; make them agree.");
+    });
+
+    test('is fine when an array\'s component is named with the [] suffix', function () {
         $operation = qpOperation('duplicated');
         qpAttacher()->attach(qpDocument($operation, [qpComponent('ids', wireName: 'ids[]')]));
 

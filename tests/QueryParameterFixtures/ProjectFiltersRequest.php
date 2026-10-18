@@ -10,7 +10,8 @@ use Spatie\LaravelData\Data;
 
 /**
  * Marked on the class itself, with the properties a request does not carry as written:
- * a computed one, injected ones, a nested Data class and a dotted input name. `search`
+ * computed ones (#[Computed] and a subclass of it), injected ones, a nested Data class
+ * and a dotted input name. `search`
  * is also read by ListProjectsRequest.
  */
 #[QueryParameters]
@@ -18,6 +19,9 @@ class ProjectFiltersRequest extends Data
 {
     #[Computed]
     public string $label;
+
+    #[Summarised]
+    public string $summary;
 
     public function __construct(
         #[FromRouteParameter('project')]
@@ -30,5 +34,6 @@ class ProjectFiltersRequest extends Data
         public ?string $search = null,
     ) {
         $this->label = (string) $search;
+        $this->summary = $this->label;
     }
 }

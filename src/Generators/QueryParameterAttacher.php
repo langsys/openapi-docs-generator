@@ -22,8 +22,8 @@ use Psr\Log\LoggerInterface;
  *
  *  - a property whose input name is the key of an `in: query` entry in
  *    `components.parameters` becomes a `$ref` to it, so shared parameters keep one
- *    definition; the two must agree on the parameter's name and on whether it is
- *    required;
+ *    definition; the two must agree on the name it is sent under and on whether it
+ *    is required;
  *  - otherwise it is inline, and an array-typed one is named `{name}[]`, the form PHP
  *    reads a repeated query key into an array from, while an object-typed one (a
  *    string map or a nested Data class) is `deepObject`, so its keys travel as
@@ -165,14 +165,17 @@ class QueryParameterAttacher
             return;
         }
 
-        if (is_string($component->name) && $this->baseName($component->name) !== $name) {
+        $wireName = $this->wireName($parameter);
+
+        if ($component->name !== $wireName) {
             throw new OpenApiDocsException(sprintf(
-                'Query parameter \'%s\' of %s is read by %s, but #/components/parameters/%s is named \'%s\'; make them agree.',
+                'Query parameter \'%s\' of %s is read by %s as \'%s\', but #/components/parameters/%s %s; make them agree.',
                 $name,
                 $location,
                 $class,
+                $wireName,
                 $name,
-                $component->name,
+                Generator::isDefault($component->name) ? 'has no name' : sprintf('is named \'%s\'', $component->name),
             ));
         }
 
@@ -205,15 +208,26 @@ class QueryParameterAttacher
             return new OA\Parameter(['ref' => '#/components/parameters/' . $name]);
         }
 
+        $parameter->name = $this->wireName($parameter);
+
         // A nested Data class is an `allOf` over its component schema.
-        if ($parameter->schema->type === 'array') {
-            $parameter->name = $name . '[]';
-        } elseif ($parameter->schema->type === 'object' || $parameter->schema->allOf !== Generator::UNDEFINED) {
+        if ($parameter->schema->type === 'object' || $parameter->schema->allOf !== Generator::UNDEFINED) {
             $parameter->style = 'deepObject';
             $parameter->explode = true;
         }
 
         return $parameter;
+    }
+
+    /**
+     * The name a parameter is sent under: `{name}[]` for an array, the form PHP reads a
+     * repeated query key into an array from (`ids=1&ids=2` would arrive as `'2'`).
+     */
+    private function wireName(OA\Parameter $parameter): string
+    {
+        $name = (string) $parameter->name;
+
+        return $parameter->schema->type === 'array' ? $name . '[]' : $name;
     }
 
     /**
