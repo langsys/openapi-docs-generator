@@ -12,6 +12,7 @@ use Langsys\OpenApiDocsGenerator\Generators\QueryParameterAttacher;
 use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\ListProjectsRequest;
 use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\ListRequest;
 use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\PlainFilterRequest;
+use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\ProjectFiltersRequest;
 use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\QueryParametersController;
 use OpenApi\Annotations as OA;
 use OpenApi\Context;
@@ -57,11 +58,11 @@ function qpDocument(OA\Get $operation, array $components = [], array $pathParame
     return $openapi;
 }
 
-function qpComponent(string $name, string $in = 'query', bool $required = false): OA\Parameter
+function qpComponent(string $name, string $in = 'query', bool $required = false, ?string $wireName = null): OA\Parameter
 {
     return new OA\Parameter(array_filter([
         'parameter' => $name,
-        'name' => $name,
+        'name' => $wireName ?? $name,
         'in' => $in,
         'required' => $required,
         'schema' => new OA\Schema(['type' => 'string']),
@@ -222,6 +223,34 @@ describe('parameters from a marked DTO', function () {
         expect(array_key_first(qpParameters($operation)))->toBe('projectId');
     });
 
+    test('a nested Data class is sent as a deepObject', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+
+        expect(qpParameters($operation)['filter'])->toMatchArray([
+            'style' => 'deepObject',
+            'explode' => true,
+            'schema' => ['allOf' => [['$ref' => '#/components/schemas/ProjectFilter']]],
+        ]);
+    });
+
+    test('a dotted input name is written in brackets', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+
+        expect(qpParameters($operation))->toHaveKey('range[from]')
+            ->and(qpParameters($operation))->not->toHaveKey('range.from');
+    });
+
+    test('computed and injected properties are left out, one that yields to the request is optional', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search'])
+            ->and($parameters['workspace'])->not->toHaveKey('required');
+    });
+
     test('the matched route\'s action is inspected when the annotation sits elsewhere', function () {
         $operation = qpOperation('bare');
         qpAttacher(qpRouteTo(QueryParametersController::class . '@index'))->attach(qpDocument($operation));
@@ -279,6 +308,16 @@ describe('a parameter documented by hand as well', function () {
             ->toThrow(OpenApiDocsException::class, "Query parameter 'search'");
     });
 
+    test('fails when two marked DTOs both read it, naming both', function () {
+        $operation = qpOperation('twice');
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation)))->toThrow(
+            OpenApiDocsException::class,
+            "Query parameter 'search' of " . QueryParametersController::class . '@twice (GET /api/things) is read by both '
+            . ListProjectsRequest::class . ' and ' . ProjectFiltersRequest::class . '; map one of them to another input name.',
+        );
+    });
+
     test('is fine in another location', function () {
         $operation = qpOperation('duplicated', [new OA\Parameter(['name' => 'status', 'in' => 'path', 'required' => true])]);
         qpAttacher()->attach(qpDocument($operation));
@@ -289,6 +328,25 @@ describe('a parameter documented by hand as well', function () {
         );
 
         expect(array_column($status, 'in'))->toBe(['path', 'query']);
+    });
+});
+
+describe('a $ref to a component that disagrees', function () {
+    test('on the name fails, naming both', function () {
+        $operation = qpOperation('duplicated');
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation, [qpComponent('search', wireName: 'q')])))->toThrow(
+            OpenApiDocsException::class,
+            "Query parameter 'search' of " . QueryParametersController::class . '@duplicated (GET /api/things) is read by '
+            . ListProjectsRequest::class . ", but #/components/parameters/search is named 'q'; make them agree.",
+        );
+    });
+
+    test('on the name only by the [] suffix is fine', function () {
+        $operation = qpOperation('duplicated');
+        qpAttacher()->attach(qpDocument($operation, [qpComponent('ids', wireName: 'ids[]')]));
+
+        expect(qpParameters($operation))->toHaveKey('#/components/parameters/ids');
     });
 });
 

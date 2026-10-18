@@ -305,21 +305,22 @@ class ProjectController
 }
 ```
 
-An operation whose action takes `ListProjectsRequest` gets one `in: query` parameter per public property, after the parameters written by hand:
+An operation whose action takes `ListProjectsRequest` gets one `in: query` parameter per public property read from the request, after the parameters written by hand:
 
-- **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
+- **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. A dotted input name reads nested input, so it is written as a query string nests it: `#[MapInputName('range.from')]` is `range[from]`. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) or a nested Data class is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
 - **Required**: only when the property is non-nullable, has no default and is not `Optional`.
 - **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
 - **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it.
-- **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint. `#[Omit]` leaves a property out.
+- **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint.
+- **Left out**: a property with `#[Omit]`, a `#[Computed]` one, and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
 
-**Shared parameters.** A property whose input name is the key of an `in: query` entry in `components.parameters` is emitted as a `$ref` to it, so a parameter such as `page` keeps the one definition you wrote. The `$ref` carries the component's `required`, so the property and the component must agree on it; when they don't, generation fails naming the action, the DTO and the component:
+**Shared parameters.** A property whose input name is the key of an `in: query` entry in `components.parameters` is emitted as a `$ref` to it, so a parameter such as `page` keeps the one definition you wrote. The `$ref` carries the component's `name` and `required`, so the property and the component must agree on both; when they don't, generation fails naming the action, the DTO and the component:
 
 ```php
 #[OA\Parameter(parameter: 'page', name: 'page', in: 'query', description: 'Page to request', schema: new OA\Schema(type: 'integer'))]
 ```
 
-**Never documented twice.** If an operation already documents a query parameter of the same name by hand (inline or by `$ref`, on the operation or its path item, with or without `[]`), generation fails with a message naming the action and the parameter.
+**Never documented twice.** If an operation already documents a query parameter of the same name by hand (inline or by `$ref`, on the operation or its path item, with or without `[]`), generation fails with a message naming the action and the parameter. So does a name that two marked Data parameters of one action, or two properties of one DTO, both read.
 
 The action inspected is the annotated method, or the matched route's action when the `@OA` annotation sits on a different method. An action taking a Data class without the attribute gets no parameters from it.
 

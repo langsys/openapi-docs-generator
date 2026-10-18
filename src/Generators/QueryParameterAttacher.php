@@ -22,14 +22,16 @@ use Psr\Log\LoggerInterface;
  *
  *  - a property whose input name is the key of an `in: query` entry in
  *    `components.parameters` becomes a `$ref` to it, so shared parameters keep one
- *    definition; the two must agree on whether the parameter is required;
+ *    definition; the two must agree on the parameter's name and on whether it is
+ *    required;
  *  - otherwise it is inline, and an array-typed one is named `{name}[]`, the form PHP
- *    reads a repeated query key into an array from, while an object-typed one is
- *    `deepObject`, so its keys travel as `{name}[key]`. A union keeps its plain name.
+ *    reads a repeated query key into an array from, while an object-typed one (a
+ *    string map or a nested Data class) is `deepObject`, so its keys travel as
+ *    `{name}[key]`. A union keeps its plain name.
  *
- * An operation that already documents a query parameter of the same name by hand fails
- * generation, so a parameter is never documented twice, and so does a `$ref` whose
- * component disagrees with the property on `required`.
+ * A query parameter is never documented twice: one the operation already documents by
+ * hand fails generation, and so does one two marked Data parameters (or two properties
+ * of one) both read. So does a `$ref` whose component disagrees with the property.
  */
 class QueryParameterAttacher
 {
@@ -49,7 +51,8 @@ class QueryParameterAttacher
      *
      * @return int  Number of parameters added.
      *
-     * @throws OpenApiDocsException when an operation documents one of them by hand.
+     * @throws OpenApiDocsException when one of them is documented twice, or disagrees
+     *                               with the component its `$ref` points at.
      */
     public function attach(OA\OpenApi $openapi): int
     {
@@ -101,15 +104,17 @@ class QueryParameterAttacher
             return 0;
         }
 
-        $documented = $this->documentedQueryParameters($operation, $pathItem);
+        $handWritten = $this->documentedQueryParameters($operation, $pathItem);
         $location = sprintf('%s@%s (%s %s)', $action->class, $action->getName(), strtoupper($method), $path);
+        /** @var array<string, class-string> $readBy  name => the Data class that added it */
+        $readBy = [];
         $added = 0;
 
         foreach ($classes as $class) {
             foreach ($this->dtoSchemaBuilder->buildQueryParameters($class) as $parameter) {
                 $name = (string) $parameter->name;
 
-                if (isset($documented[$name])) {
+                if (isset($handWritten[$name])) {
                     throw new OpenApiDocsException(sprintf(
                         'Query parameter \'%s\' of %s is documented by hand and by %s; remove the hand-written one.',
                         $name,
@@ -118,8 +123,19 @@ class QueryParameterAttacher
                     ));
                 }
 
+                if (isset($readBy[$name])) {
+                    throw new OpenApiDocsException(sprintf(
+                        'Query parameter \'%s\' of %s is %s; map one of them to another input name.',
+                        $name,
+                        $location,
+                        $readBy[$name] === $class
+                            ? 'the input name of two properties of ' . $class
+                            : sprintf('read by both %s and %s', $readBy[$name], $class),
+                    ));
+                }
+
                 $this->assertComponentAgrees($parameter, $class, $location);
-                $documented[$name] = true;
+                $readBy[$name] = $class;
 
                 if ($operation->parameters === Generator::UNDEFINED) {
                     $operation->parameters = [];
@@ -134,9 +150,9 @@ class QueryParameterAttacher
     }
 
     /**
-     * A property documented by `$ref` takes the component's word on whether it is
-     * required, so the two must agree: a name that matches by accident would otherwise
-     * change what the endpoint documents without a trace.
+     * A property documented by `$ref` takes the component's word on its name and on
+     * whether it is required, so the two must agree: a key that matches by accident
+     * would otherwise change what the endpoint documents without a trace.
      *
      * @throws OpenApiDocsException
      */
@@ -147,6 +163,17 @@ class QueryParameterAttacher
 
         if ($component === null) {
             return;
+        }
+
+        if (is_string($component->name) && $this->baseName($component->name) !== $name) {
+            throw new OpenApiDocsException(sprintf(
+                'Query parameter \'%s\' of %s is read by %s, but #/components/parameters/%s is named \'%s\'; make them agree.',
+                $name,
+                $location,
+                $class,
+                $name,
+                $component->name,
+            ));
         }
 
         $required = $parameter->required === true;
@@ -178,9 +205,10 @@ class QueryParameterAttacher
             return new OA\Parameter(['ref' => '#/components/parameters/' . $name]);
         }
 
+        // A nested Data class is an `allOf` over its component schema.
         if ($parameter->schema->type === 'array') {
             $parameter->name = $name . '[]';
-        } elseif ($parameter->schema->type === 'object') {
+        } elseif ($parameter->schema->type === 'object' || $parameter->schema->allOf !== Generator::UNDEFINED) {
             $parameter->style = 'deepObject';
             $parameter->explode = true;
         }

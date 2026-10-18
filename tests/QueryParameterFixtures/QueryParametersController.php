@@ -39,6 +39,16 @@ class QueryParametersController
     {
     }
 
+    /** Takes a marked DTO with injected, computed, nested and dotted properties. */
+    public function filtered(ProjectFiltersRequest $request): void
+    {
+    }
+
+    /** Takes two marked DTOs that both read `search`. */
+    public function twice(ListProjectsRequest $list, ProjectFiltersRequest $filters): void
+    {
+    }
+
     /** Takes no Data class at all. */
     public function bare(): void
     {

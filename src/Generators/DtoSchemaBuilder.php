@@ -17,13 +17,16 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\OneOfItemsFrom;
 use Langsys\OpenApiDocsGenerator\Generators\Attributes\OpenApiAttribute;
 use OpenApi\Annotations as OA;
 use OpenApi\Generator as OpenApiGenerator;
+use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionEnumBackedCase;
 use ReflectionNamedType;
 use ReflectionProperty;
 use ReflectionType;
 use ReflectionUnionType;
+use Spatie\LaravelData\Attributes\Computed;
 use Spatie\LaravelData\Attributes\DataCollectionOf;
+use Spatie\LaravelData\Attributes\InjectsPropertyValue;
 use Spatie\LaravelData\Support\DataConfig;
 use Symfony\Component\Finder\Finder;
 
@@ -887,8 +890,10 @@ class DtoSchemaBuilder
     // -------------------------------------------------------------------------
 
     /**
-     * One `in: query` parameter per public property of a Data class, named by the
-     * property's input name, so the documented name is the one the request is read with.
+     * One `in: query` parameter per public property of a Data class that is read from the
+     * request, named by the property's input name, so the documented name is the one the
+     * request is read with. A dotted input name reads nested input, so it is written the
+     * way a query string nests it: `filter.search` is `filter[search]`.
      *
      * Inherited properties come first, ancestors before descendants, so the parameters a
      * base DTO shares sit in the same place on every operation. A parameter is required
@@ -897,6 +902,11 @@ class DtoSchemaBuilder
      * union under `oneOf`. Description and example come from #[Description] and
      * #[Example]; generated examples are left out, so a parameter shows an example only
      * when its DTO declares one.
+     *
+     * A #[Computed] property, and one laravel-data fills from elsewhere (a route
+     * parameter, the authenticated user, the container) over whatever the request sends,
+     * is not request input and is left out. One that yields to a value in the request
+     * (`replaceWhenPresentInPayload: false`) is documented, and never required.
      *
      * @return array<int, OA\Parameter>
      */
@@ -907,7 +917,12 @@ class DtoSchemaBuilder
         $parameters = [];
 
         foreach ($this->inheritedFirst($reflection) as $prop) {
-            if ($prop->isStatic()) {
+            if ($prop->isStatic() || $prop->getAttributes(Computed::class) !== []) {
+                continue;
+            }
+
+            $injected = $this->injectedValue($prop);
+            if ($injected?->shouldBeReplacedWhenPresentInPayload()) {
                 continue;
             }
 
@@ -920,12 +935,15 @@ class DtoSchemaBuilder
             $schema = $this->buildQueryParameterSchema($prop, $meta);
 
             $props = [
-                'name' => $inputNames[$meta->name] ?? $meta->name,
+                'name' => $this->queryName($inputNames[$meta->name] ?? $meta->name),
                 'in' => 'query',
                 'schema' => $schema,
             ];
 
-            if (! $type->allowsNull() && ! $meta->hasDefault && ! $this->propertyDeclaresLaravelDataOptional($prop)) {
+            if ($injected === null
+                && ! $type->allowsNull()
+                && ! $meta->hasDefault
+                && ! $this->propertyDeclaresLaravelDataOptional($prop)) {
                 $props['required'] = true;
             }
 
@@ -1040,6 +1058,31 @@ class DtoSchemaBuilder
         }
 
         return $names;
+    }
+
+    /**
+     * An input name as a query string carries it: laravel-data reads a dotted name as a
+     * path into nested input, which a query string writes in brackets.
+     */
+    private function queryName(string $inputName): string
+    {
+        return preg_replace('/\.([^.]*)/', '[$1]', $inputName);
+    }
+
+    /**
+     * The attribute through which laravel-data fills the property from outside the
+     * request input (#[FromRouteParameter], #[FromAuthenticatedUser], #[FromContainer]
+     * and their *Property forms), or null. Older laravel-data versions have none.
+     */
+    private function injectedValue(ReflectionProperty $property): ?InjectsPropertyValue
+    {
+        if (! interface_exists(InjectsPropertyValue::class)) {
+            return null;
+        }
+
+        $attributes = $property->getAttributes(InjectsPropertyValue::class, ReflectionAttribute::IS_INSTANCEOF);
+
+        return $attributes === [] ? null : $attributes[0]->newInstance();
     }
 
     /**
