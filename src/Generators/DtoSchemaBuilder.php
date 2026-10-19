@@ -2,6 +2,7 @@
 
 namespace Langsys\OpenApiDocsGenerator\Generators;
 
+use DateTime;
 use Exception;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
@@ -67,13 +68,13 @@ class DtoSchemaBuilder
 
     /**
      * #[DateFormat] formats that are an OpenAPI format: a calendar date, or an RFC 3339
-     * date-time (DATE_RFC3339 is DATE_ATOM).
+     * date-time (DATE_RFC3339 is DATE_ATOM). `c` is not one: PHP cannot parse with it, so
+     * `date_format:c` accepts nothing.
      */
     private const DATE_FORMATS = [
         'Y-m-d' => 'date',
         DATE_ATOM => 'date-time',
         DATE_RFC3339_EXTENDED => 'date-time',
-        'c' => 'date-time',
     ];
 
     /** @var string[] */
@@ -406,6 +407,7 @@ class DtoSchemaBuilder
             'oneOfItemsFrom' => $attributes->oneOfItemsFrom,
             'envelopeField' => $attributes->envelopeField,
             'format' => $attributes->format,
+            'dateFormats' => $attributes->dateFormats,
             'docComment' => $property->getDocComment() ?: null,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
@@ -484,7 +486,9 @@ class DtoSchemaBuilder
             'oneOfItemsFrom' => null,
             'envelopeField' => false,
             'format' => null,
+            'dateFormats' => [],
         ];
+        $dateFormat = null;
 
         foreach ($reflectionAttributes as $attr) {
             $instance = $attr->newInstance();
@@ -504,9 +508,20 @@ class DtoSchemaBuilder
                 $result->oneOfItemsFrom = $instance->group;
             } elseif ($instance instanceof DataCollectionOf) {
                 $result->collectionOf = $instance->class;
+            } elseif ($instance instanceof DateFormat) {
+                $dateFormat = $instance;
             } elseif (($format = $this->validationFormat($instance)) !== null) {
                 $result->format = $format;
             }
+        }
+
+        // #[DateFormat] is the exact rule, so it decides over #[Date] whichever comes
+        // first, also when its formats pin none. `dateFormats` are the PHP formats an
+        // example has to match.
+        if ($dateFormat !== null) {
+            [$result->format, $result->dateFormats] = $this->readDateFormat($dateFormat);
+        } elseif ($result->format === 'date') {
+            $result->dateFormats = ['Y-m-d'];
         }
 
         return $result;
@@ -515,30 +530,47 @@ class DtoSchemaBuilder
     /**
      * Whether a value is a valid string of the given format (one of VALIDATION_FORMATS).
      */
-    private function fitsFormat(mixed $value, string $format): bool
+    private function fitsFormat(mixed $value, object $meta): bool
     {
-        return is_string($value) && match ($format) {
+        return is_string($value) && match ($meta->format) {
             'uuid' => Str::isUuid($value),
-            'date' => preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1,
-            'date-time' => preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/', $value) === 1,
+            'date', 'date-time' => $this->fitsDateFormats($value, $meta->dateFormats),
             'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
             'uri' => filter_var($value, FILTER_VALIDATE_URL) !== false,
         };
     }
 
     /**
-     * A Faker example of a string in the format. Faker is called directly: an app's
-     * custom example functions can share a Faker function's name (the default config's
-     * `date` makes date-times).
+     * Whether a value passes `date_format` with any of the PHP formats, checked as
+     * Laravel checks it: parsed and formatted back unchanged.
+     *
+     * @param  array<int, string>  $dateFormats
      */
-    private function formatExample(string $format): string
+    private function fitsDateFormats(string $value, array $dateFormats): bool
+    {
+        foreach ($dateFormats as $dateFormat) {
+            $date = DateTime::createFromFormat('!' . $dateFormat, $value);
+
+            if ($date !== false && $date->format($dateFormat) === $value) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A Faker example of a string in the property's format; a date in the first of its
+     * PHP formats. Faker is called directly: an app's custom example functions can share
+     * a Faker function's name (the default config's `date` makes date-times).
+     */
+    private function formatExample(object $meta): string
     {
         $faker = fake();
 
-        return match ($format) {
+        return match ($meta->format) {
             'uuid' => $faker->uuid(),
-            'date' => $faker->date('Y-m-d'),
-            'date-time' => $faker->date(DATE_ATOM),
+            'date', 'date-time' => $faker->dateTime()->format($meta->dateFormats[0]),
             'email' => $faker->safeEmail(),
             'uri' => $faker->url(),
         };
@@ -546,14 +578,10 @@ class DtoSchemaBuilder
 
     /**
      * The format a laravel-data validation attribute (or a subclass of one) pins a string
-     * to, or null when it pins none.
+     * to, or null when it pins none. #[DateFormat] is read by readDateFormat().
      */
     private function validationFormat(object $attribute): ?string
     {
-        if ($attribute instanceof DateFormat) {
-            return $this->dateFormatFormat($attribute);
-        }
-
         foreach (self::VALIDATION_FORMATS as $class => $format) {
             if ($attribute instanceof $class) {
                 return $format;
@@ -564,18 +592,22 @@ class DtoSchemaBuilder
     }
 
     /**
-     * The format a #[DateFormat] pins a string to: the one its formats all map to in
-     * DATE_FORMATS, or null when any of them maps to none (or is resolved at runtime) or
-     * they disagree. Its formats are a list, or one string before laravel-data 4.
+     * The format a #[DateFormat] pins a string to, the one its PHP formats all map to in
+     * DATE_FORMATS, with those PHP formats; or [null, []] when any of them maps to none
+     * (or is resolved at runtime) or they disagree. Its formats are a list in recent
+     * laravel-data versions and a single string in older ones.
+     *
+     * @return array{0: ?string, 1: array<int, string>}
      */
-    private function dateFormatFormat(DateFormat $attribute): ?string
+    private function readDateFormat(DateFormat $attribute): array
     {
+        $dateFormats = Arr::flatten(Arr::wrap($attribute->parameters()[0] ?? []));
         $formats = array_unique(array_map(
             static fn (mixed $format): ?string => is_string($format) ? (self::DATE_FORMATS[$format] ?? null) : null,
-            Arr::flatten(Arr::wrap($attribute->parameters()[0] ?? [])),
+            $dateFormats,
         ));
 
-        return count($formats) === 1 ? reset($formats) : null;
+        return count($formats) === 1 && reset($formats) !== null ? [reset($formats), $dateFormats] : [null, []];
     }
 
     /**
@@ -956,10 +988,13 @@ class DtoSchemaBuilder
         $openApiType = $this->mapPhpTypeToOpenApi($meta->typeName);
         $example = $this->generateExample($meta);
 
-        // A generated example must fit the format; one the DTO declares is used as written.
-        if ($openApiType === 'string' && $meta->format !== null && $meta->example === null
-            && ! $this->fitsFormat($example, $meta->format)) {
-            $example = $this->formatExample($meta->format);
+        // A generated example, from the name or an #[Example(':faker')] reference, must fit
+        // the format; a literal #[Example] is used as written.
+        $generated = $meta->example === null
+            || str_starts_with((string) $meta->example, ExampleGenerator::FAKER_FUNCTION_PREFIX);
+
+        if ($openApiType === 'string' && $meta->format !== null && $generated && ! $this->fitsFormat($example, $meta)) {
+            $example = $this->formatExample($meta);
         }
 
         // For bool, default to true if example is empty

@@ -228,9 +228,20 @@ test('#[DateFormat] is a date for Y-m-d, a date-time for RFC 3339, and nothing f
 
     expect($props['day']->format)->toBe('date')
         ->and($props['stamp']->format)->toBe('date-time')
-        ->and($props['iso_stamp']->format)->toBe('date-time')
+        ->and($props['precise_stamp']->format)->toBe('date-time')
+        ->and($props['either_stamp']->format)->toBe('date-time')
         ->and($props['day_or_stamp']->format)->toBe(Generator::UNDEFINED)
+        ->and($props['c_stamp']->format)->toBe(Generator::UNDEFINED) // date_format:c accepts nothing
         ->and($props['local_day']->format)->toBe(Generator::UNDEFINED);
+});
+
+test('#[DateFormat] decides over #[Date] in either order', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
+    $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+
+    expect($props['date_then_local_day']->format)->toBe(Generator::UNDEFINED)
+        ->and($props['stamp_then_date']->format)->toBe('date-time');
 });
 
 test('a generated example fits the format, a declared one is used as written', function () {
@@ -245,14 +256,18 @@ test('a generated example fits the format, a declared one is used as written', f
     );
     $schema = collect($builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
     $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
-    $date = '/^\d{4}-\d{2}-\d{2}$/';
-    $dateTime = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/';
+    // As Laravel's date_format checks: parsed and formatted back unchanged.
+    $fits = fn (string $property, string $format): bool => ($date = DateTime::createFromFormat('!' . $format, $props[$property]->example)) !== false
+        && $date->format($format) === $props[$property]->example;
 
     expect(Str::isUuid($props['organization_id']->example))->toBeTrue()
-        ->and($props['start_date']->example)->toMatch($date)
-        ->and($props['published_at']->example)->toMatch($date)
-        ->and($props['day']->example)->toMatch($date)
-        ->and($props['stamp']->example)->toMatch($dateTime)
+        ->and($fits('start_date', 'Y-m-d'))->toBeTrue()
+        ->and($fits('published_at', 'Y-m-d'))->toBeTrue()
+        ->and($fits('day', 'Y-m-d'))->toBeTrue()
+        ->and($fits('hinted_day', 'Y-m-d'))->toBeTrue() // #[Example(':date')] runs the custom `date` too
+        ->and($fits('stamp', DATE_ATOM))->toBeTrue()
+        ->and($fits('precise_stamp', DATE_RFC3339_EXTENDED))->toBeTrue()
+        ->and($fits('stamp_then_date', DATE_ATOM))->toBeTrue()
         ->and(filter_var($props['email']->example, FILTER_VALIDATE_EMAIL))->not->toBeFalse()
         ->and(filter_var($props['website_url']->example, FILTER_VALIDATE_URL))->not->toBeFalse()
         ->and($props['legacy_ref']->example)->toBe('legacy-ref');

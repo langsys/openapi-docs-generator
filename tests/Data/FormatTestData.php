@@ -36,12 +36,22 @@ class FormatTestData extends Data
         public string $day,
         #[DateFormat(DATE_ATOM)]
         public string $stamp,
-        #[DateFormat('c', DATE_RFC3339)]
-        public ?string $iso_stamp,
-        #[DateFormat(['Y-m-d', 'c'])]
+        #[DateFormat(DATE_RFC3339_EXTENDED)]
+        public string $precise_stamp,
+        #[DateFormat(DATE_RFC3339, DATE_RFC3339_EXTENDED)]
+        public ?string $either_stamp,
+        #[DateFormat(['Y-m-d', DATE_ATOM])]
         public string $day_or_stamp,
+        #[DateFormat('c')]
+        public string $c_stamp,
         #[DateFormat('d/m/Y')]
         public string $local_day,
+        #[Date, DateFormat('d/m/Y')]
+        public string $date_then_local_day,
+        #[DateFormat(DATE_ATOM), Date]
+        public string $stamp_then_date,
+        #[DateFormat('Y-m-d'), Example(':date')]
+        public string $hinted_day,
         public string $name,
     ) {}
 }
