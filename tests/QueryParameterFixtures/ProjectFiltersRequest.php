@@ -6,13 +6,15 @@ use Langsys\OpenApiDocsGenerator\Generators\Attributes\QueryParameters;
 use Spatie\LaravelData\Attributes\Computed;
 use Spatie\LaravelData\Attributes\FromRouteParameter;
 use Spatie\LaravelData\Attributes\MapInputName;
+use Spatie\LaravelData\Attributes\Validation\DateFormat;
 use Spatie\LaravelData\Attributes\Validation\Uuid;
 use Spatie\LaravelData\Data;
 
 /**
  * Marked on the class itself, with the properties a request does not carry as written:
  * computed ones (#[Computed] and a subclass of it), injected ones, a nested Data class
- * and a dotted input name; and #[Uuid] on a string, a union and an array. `search`
+ * and a dotted input name; and #[Uuid] on a string, a union and an array, and a
+ * #[DateFormat('Y-m-d')] date. `search`
  * is also read by ListProjectsRequest.
  */
 #[QueryParameters]
@@ -39,6 +41,8 @@ class ProjectFiltersRequest extends Data
         public string|array|null $owners = null,
         #[Uuid]
         public array $project_ids = [],
+        #[DateFormat('Y-m-d')]
+        public ?string $since = null,
     ) {
         $this->label = (string) $search;
         $this->summary = $this->label;

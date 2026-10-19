@@ -3,6 +3,7 @@
 namespace Langsys\OpenApiDocsGenerator\Generators;
 
 use Exception;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Langsys\OpenApiDocsGenerator\Data\ErrorDefinition;
@@ -30,6 +31,7 @@ use Spatie\LaravelData\Attributes\FromRouteParameter;
 use Spatie\LaravelData\Attributes\FromRouteParameterProperty;
 use Spatie\LaravelData\Attributes\InjectsPropertyValue;
 use Spatie\LaravelData\Attributes\Validation\Date;
+use Spatie\LaravelData\Attributes\Validation\DateFormat;
 use Spatie\LaravelData\Attributes\Validation\Email;
 use Spatie\LaravelData\Attributes\Validation\Url;
 use Spatie\LaravelData\Attributes\Validation\Uuid;
@@ -51,9 +53,10 @@ class DtoSchemaBuilder
     ];
 
     /**
-     * laravel-data validation attributes whose rule pins a string to an OpenAPI format.
-     * The rule applies to the property's value itself (laravel-data has no attribute for
-     * an array's elements), so only a string schema takes the format.
+     * laravel-data validation attributes whose rule pins a string to an OpenAPI format
+     * (#[DateFormat] is read by DATE_FORMATS). The rule applies to the property's value
+     * itself (laravel-data has no attribute for an array's elements), so only a string
+     * schema takes the format.
      */
     private const VALIDATION_FORMATS = [
         Uuid::class => 'uuid',
@@ -62,12 +65,15 @@ class DtoSchemaBuilder
         Url::class => 'uri',
     ];
 
-    /** The Faker function that makes an example of each format. */
-    private const FORMAT_EXAMPLES = [
-        'uuid' => ':uuid',
-        'date' => ':date',
-        'email' => ':safeEmail',
-        'uri' => ':url',
+    /**
+     * #[DateFormat] formats that are an OpenAPI format: a calendar date, or an RFC 3339
+     * date-time (DATE_RFC3339 is DATE_ATOM).
+     */
+    private const DATE_FORMATS = [
+        'Y-m-d' => 'date',
+        DATE_ATOM => 'date-time',
+        DATE_RFC3339_EXTENDED => 'date-time',
+        'c' => 'date-time',
     ];
 
     /** @var string[] */
@@ -514,8 +520,27 @@ class DtoSchemaBuilder
         return is_string($value) && match ($format) {
             'uuid' => Str::isUuid($value),
             'date' => preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1,
+            'date-time' => preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/', $value) === 1,
             'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
             'uri' => filter_var($value, FILTER_VALIDATE_URL) !== false,
+        };
+    }
+
+    /**
+     * A Faker example of a string in the format. Faker is called directly: an app's
+     * custom example functions can share a Faker function's name (the default config's
+     * `date` makes date-times).
+     */
+    private function formatExample(string $format): string
+    {
+        $faker = fake();
+
+        return match ($format) {
+            'uuid' => $faker->uuid(),
+            'date' => $faker->date('Y-m-d'),
+            'date-time' => $faker->date(DATE_ATOM),
+            'email' => $faker->safeEmail(),
+            'uri' => $faker->url(),
         };
     }
 
@@ -525,6 +550,10 @@ class DtoSchemaBuilder
      */
     private function validationFormat(object $attribute): ?string
     {
+        if ($attribute instanceof DateFormat) {
+            return $this->dateFormatFormat($attribute);
+        }
+
         foreach (self::VALIDATION_FORMATS as $class => $format) {
             if ($attribute instanceof $class) {
                 return $format;
@@ -532,6 +561,21 @@ class DtoSchemaBuilder
         }
 
         return null;
+    }
+
+    /**
+     * The format a #[DateFormat] pins a string to: the one its formats all map to in
+     * DATE_FORMATS, or null when any of them maps to none (or is resolved at runtime) or
+     * they disagree. Its formats are a list, or one string before laravel-data 4.
+     */
+    private function dateFormatFormat(DateFormat $attribute): ?string
+    {
+        $formats = array_unique(array_map(
+            static fn (mixed $format): ?string => is_string($format) ? (self::DATE_FORMATS[$format] ?? null) : null,
+            Arr::flatten(Arr::wrap($attribute->parameters()[0] ?? [])),
+        ));
+
+        return count($formats) === 1 ? reset($formats) : null;
     }
 
     /**
@@ -915,7 +959,7 @@ class DtoSchemaBuilder
         // A generated example must fit the format; one the DTO declares is used as written.
         if ($openApiType === 'string' && $meta->format !== null && $meta->example === null
             && ! $this->fitsFormat($example, $meta->format)) {
-            $example = $this->exampleGenerator->{self::FORMAT_EXAMPLES[$meta->format]}(['type' => 'string']);
+            $example = $this->formatExample($meta->format);
         }
 
         // For bool, default to true if example is empty

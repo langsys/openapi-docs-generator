@@ -254,7 +254,7 @@ describe('parameters from a marked DTO', function () {
         qpAttacher()->attach(qpDocument($operation));
         $parameters = qpParameters($operation);
 
-        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]'])
+        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]', 'since'])
             ->and($parameters['workspace'])->not->toHaveKey('required');
     });
 
@@ -266,7 +266,8 @@ describe('parameters from a marked DTO', function () {
         expect($parameters['owner_id']['schema'])->toBe(['type' => 'string', 'format' => 'uuid'])
             ->and($parameters['owners']['schema']['oneOf'][0])->toBe(['type' => 'string', 'format' => 'uuid'])
             ->and(json_encode($parameters['owners']['schema']['oneOf'][1]))->not->toContain('format')
-            ->and(json_encode($parameters['project_ids[]']))->not->toContain('format');
+            ->and(json_encode($parameters['project_ids[]']))->not->toContain('format')
+            ->and($parameters['since']['schema'])->toBe(['type' => 'string', 'format' => 'date']);
     });
 
     test('the matched route\'s action is inspected when the annotation sits elsewhere', function () {

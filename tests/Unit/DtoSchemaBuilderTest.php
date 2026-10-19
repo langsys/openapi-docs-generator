@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Str;
+use Langsys\OpenApiDocsGenerator\Functions\CustomFunctions;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use OpenApi\Annotations as OA;
@@ -220,18 +221,38 @@ test('a string property with #[Uuid], #[Date], #[Email] or #[Url] gets that form
         ->and($props['name']->format)->toBe(Generator::UNDEFINED);
 });
 
+test('#[DateFormat] is a date for Y-m-d, a date-time for RFC 3339, and nothing for another format or a mix', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
+    $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+
+    expect($props['day']->format)->toBe('date')
+        ->and($props['stamp']->format)->toBe('date-time')
+        ->and($props['iso_stamp']->format)->toBe('date-time')
+        ->and($props['day_or_stamp']->format)->toBe(Generator::UNDEFINED)
+        ->and($props['local_day']->format)->toBe(Generator::UNDEFINED);
+});
+
 test('a generated example fits the format, a declared one is used as written', function () {
+    // The package's default hints and custom functions: `_at` makes a "Y-m-d H:i:s" date-time.
     $builder = new DtoSchemaBuilder(
         dtoPaths: dirname(__DIR__, 2) . '/tests/Data',
-        exampleGenerator: new ExampleGenerator(fakerAttributeMapper: ['_at' => 'iso8601'], customFunctions: []),
+        exampleGenerator: new ExampleGenerator(
+            fakerAttributeMapper: ['_at' => 'date', '_url' => 'url', '_id' => 'id'],
+            customFunctions: ['id' => [CustomFunctions::class, 'id'], 'date' => [CustomFunctions::class, 'date']],
+        ),
         paginationFields: [],
     );
     $schema = collect($builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
     $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+    $date = '/^\d{4}-\d{2}-\d{2}$/';
+    $dateTime = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/';
 
     expect(Str::isUuid($props['organization_id']->example))->toBeTrue()
-        ->and($props['start_date']->example)->toMatch('/^\d{4}-\d{2}-\d{2}$/')
-        ->and($props['published_at']->example)->toMatch('/^\d{4}-\d{2}-\d{2}$/') // not the `_at` hint's date-time
+        ->and($props['start_date']->example)->toMatch($date)
+        ->and($props['published_at']->example)->toMatch($date)
+        ->and($props['day']->example)->toMatch($date)
+        ->and($props['stamp']->example)->toMatch($dateTime)
         ->and(filter_var($props['email']->example, FILTER_VALIDATE_EMAIL))->not->toBeFalse()
         ->and(filter_var($props['website_url']->example, FILTER_VALIDATE_URL))->not->toBeFalse()
         ->and($props['legacy_ref']->example)->toBe('legacy-ref');

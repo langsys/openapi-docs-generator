@@ -343,7 +343,7 @@ The generator handles these types automatically:
 | `BackedEnum` | `{ "type": "string", "enum": ["case1", "case2"] }` |
 | `?BackedEnum` (nullable enum) | `{ "type": "string", "enum": [...], "nullable": true }` |
 | `Carbon`, `DateTime`, etc. | `{ "type": "string", "format": "date-time" }` |
-| `string` with `#[Uuid]`, `#[Date]`, `#[Email]`, `#[Url]` | `{ "type": "string", "format": "uuid" }` (see [Formats](#formats-from-validation-attributes)) |
+| `string` with `#[Uuid]`, `#[Date]`, `#[DateFormat]`, `#[Email]`, `#[Url]` | `{ "type": "string", "format": "uuid" }` (see [Formats](#formats-from-validation-attributes)) |
 | `string\|Optional` (Laravel Data) | `{ "type": "string" }` — excluded from `required` |
 | Nullable (`?string`) | Tracked as not required |
 | Default values | Included as `"default": value` |
@@ -450,6 +450,8 @@ A `string` property carrying one of these laravel-data validation attributes get
 | `#[Date]` | `date` |
 | `#[Email]` | `email` |
 | `#[Url]` | `uri` |
+| `#[DateFormat('Y-m-d')]` | `date` |
+| `#[DateFormat(DATE_ATOM)]` (also `DATE_RFC3339`, `DATE_RFC3339_EXTENDED`, `'c'`) | `date-time` |
 
 ```php
 use Spatie\LaravelData\Attributes\Validation\Date;
@@ -475,7 +477,7 @@ Produces:
 }
 ```
 
-The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse.
+The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse; `#[DateFormat('Y-m-d')]` enforces it. A `#[DateFormat]` with any other format, or with several that don't map to the same format, gets none.
 
 An example the generator makes up always fits the format: when the one from the property's name doesn't (a `_at` hint's date-time on a `#[Date]` field, an empty string), Faker makes one that does. An `#[Example]` is used as written, and so is a schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter`.
 
