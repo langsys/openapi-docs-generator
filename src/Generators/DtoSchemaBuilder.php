@@ -528,6 +528,38 @@ class DtoSchemaBuilder
     }
 
     /**
+     * The example, or, when it was generated (from the name or an #[Example(':faker')]
+     * reference) and does not fit the property's format, one Faker makes that does. A
+     * literal #[Example] is used as written.
+     */
+    private function fitExample(mixed $example, object $meta): mixed
+    {
+        $generated = $meta->example === null
+            || str_starts_with((string) $meta->example, ExampleGenerator::FAKER_FUNCTION_PREFIX);
+
+        return $meta->format !== null && $generated && ! $this->fitsFormat($example, $meta)
+            ? $this->formatExample($meta)
+            : $example;
+    }
+
+    /**
+     * Whether the property's type is `string` or a union with a `string` member, the
+     * schemas a format goes on.
+     */
+    private function allowsString(ReflectionProperty $property): bool
+    {
+        $type = $property->getType();
+
+        foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $member) {
+            if ($member instanceof ReflectionNamedType && $member->getName() === 'string') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Whether a value is a valid string of the given format (one of VALIDATION_FORMATS).
      */
     private function fitsFormat(mixed $value, object $meta): bool
@@ -988,13 +1020,8 @@ class DtoSchemaBuilder
         $openApiType = $this->mapPhpTypeToOpenApi($meta->typeName);
         $example = $this->generateExample($meta);
 
-        // A generated example, from the name or an #[Example(':faker')] reference, must fit
-        // the format; a literal #[Example] is used as written.
-        $generated = $meta->example === null
-            || str_starts_with((string) $meta->example, ExampleGenerator::FAKER_FUNCTION_PREFIX);
-
-        if ($openApiType === 'string' && $meta->format !== null && $generated && ! $this->fitsFormat($example, $meta)) {
-            $example = $this->formatExample($meta);
+        if ($openApiType === 'string') {
+            $example = $this->fitExample($example, $meta);
         }
 
         // For bool, default to true if example is empty
@@ -1098,6 +1125,11 @@ class DtoSchemaBuilder
 
             if ($meta->example !== null) {
                 $example = $this->generateExample($meta);
+
+                if ($this->allowsString($prop)) {
+                    $example = $this->fitExample($example, $meta);
+                }
+
                 $props['example'] = $schema->type === 'array' && ! is_array($example) ? [$example] : $example;
             }
 

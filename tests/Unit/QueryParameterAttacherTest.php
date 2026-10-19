@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Routing\Route;
+use Illuminate\Support\Str;
 use Langsys\OpenApiDocsGenerator\Contracts\RouteResolver;
 use Langsys\OpenApiDocsGenerator\Data\ResolvableOperation;
 use Langsys\OpenApiDocsGenerator\Data\ResolvedRoute;
@@ -254,7 +255,7 @@ describe('parameters from a marked DTO', function () {
         qpAttacher()->attach(qpDocument($operation));
         $parameters = qpParameters($operation);
 
-        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]', 'since'])
+        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]', 'since', 'owner_ref', 'owner_refs'])
             ->and($parameters['workspace'])->not->toHaveKey('required');
     });
 
@@ -268,6 +269,15 @@ describe('parameters from a marked DTO', function () {
             ->and(json_encode($parameters['owners']['schema']['oneOf'][1]))->not->toContain('format')
             ->and(json_encode($parameters['project_ids[]']))->not->toContain('format')
             ->and($parameters['since']['schema'])->toBe(['type' => 'string', 'format' => 'date']);
+    });
+
+    test('a Faker #[Example] that does not fit the format is replaced by one that does', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect(Str::isUuid($parameters['owner_ref']['example']))->toBeTrue()
+            ->and(Str::isUuid($parameters['owner_refs']['example']))->toBeTrue();
     });
 
     test('the matched route\'s action is inspected when the annotation sits elsewhere', function () {
