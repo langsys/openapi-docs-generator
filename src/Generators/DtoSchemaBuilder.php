@@ -543,15 +543,19 @@ class DtoSchemaBuilder
     }
 
     /**
-     * Whether the property's type is `string` or a union with a `string` member, the
-     * schemas a format goes on.
+     * Whether the property's type, or a member of its union, is a builtin documented as a
+     * string schema (`string`, and `mixed` or `object`, which map to one): the schemas a
+     * format goes on.
      */
     private function allowsString(ReflectionProperty $property): bool
     {
         $type = $property->getType();
 
         foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $member) {
-            if ($member instanceof ReflectionNamedType && $member->getName() === 'string') {
+            if ($member instanceof ReflectionNamedType
+                && $member->isBuiltin()
+                && $member->getName() !== 'null'
+                && $this->mapPhpTypeToOpenApi($member->getName()) === 'string') {
                 return true;
             }
         }

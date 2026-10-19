@@ -255,7 +255,7 @@ describe('parameters from a marked DTO', function () {
         qpAttacher()->attach(qpDocument($operation));
         $parameters = qpParameters($operation);
 
-        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]', 'since', 'owner_ref', 'owner_refs'])
+        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]', 'since', 'owner_ref', 'owner_refs', 'owner_any'])
             ->and($parameters['workspace'])->not->toHaveKey('required');
     });
 
@@ -277,7 +277,9 @@ describe('parameters from a marked DTO', function () {
         $parameters = qpParameters($operation);
 
         expect(Str::isUuid($parameters['owner_ref']['example']))->toBeTrue()
-            ->and(Str::isUuid($parameters['owner_refs']['example']))->toBeTrue();
+            ->and(Str::isUuid($parameters['owner_refs']['example']))->toBeTrue()
+            ->and($parameters['owner_any']['schema'])->toBe(['type' => 'string', 'format' => 'uuid'])
+            ->and(Str::isUuid($parameters['owner_any']['example']))->toBeTrue();
     });
 
     test('the matched route\'s action is inspected when the annotation sits elsewhere', function () {
