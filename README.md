@@ -19,6 +19,7 @@ Generate OpenAPI 3.x documentation directly from [Spatie Laravel Data](https://s
   - [Enum Example](#enum-example)
   - [Nested Data Classes](#nested-data-classes)
   - [DateTime / Carbon](#datetime--carbon)
+  - [Formats from Validation Attributes](#formats-from-validation-attributes)
   - [Optional Properties (`T|Optional`)](#optional-properties-toptional)
 - [Collections](#collections)
   - [Laravel Data v4 (Recommended)](#laravel-data-v4-recommended)
@@ -309,7 +310,7 @@ An operation whose action takes `ListProjectsRequest` gets one `in: query` param
 
 - **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. A dotted input name reads nested input, so it is written as a query string nests it: `#[MapInputName('range.from')]` is `range[from]`. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) or a nested Data class is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
 - **Required**: only when the property is non-nullable, has no default and is not `Optional`.
-- **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
+- **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept, a [validation attribute](#formats-from-validation-attributes) gives a string its `format`). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
 - **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it.
 - **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint.
 - **Left out**: a property with `#[Omit]`, a `#[Computed]` one (or a subclass of it), and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
@@ -342,6 +343,7 @@ The generator handles these types automatically:
 | `BackedEnum` | `{ "type": "string", "enum": ["case1", "case2"] }` |
 | `?BackedEnum` (nullable enum) | `{ "type": "string", "enum": [...], "nullable": true }` |
 | `Carbon`, `DateTime`, etc. | `{ "type": "string", "format": "date-time" }` |
+| `string` with `#[Uuid]`, `#[Date]`, `#[Email]`, `#[Url]` | `{ "type": "string", "format": "uuid" }` (see [Formats](#formats-from-validation-attributes)) |
 | `string\|Optional` (Laravel Data) | `{ "type": "string" }` — excluded from `required` |
 | Nullable (`?string`) | Tracked as not required |
 | Default values | Included as `"default": value` |
@@ -437,6 +439,43 @@ Produces:
 ```
 
 Without this, `Carbon` and `DateTime` would be treated as nested objects with a `$ref` — which is incorrect since Laravel Data serializes them as ISO 8601 strings.
+
+### Formats from Validation Attributes
+
+A `string` property carrying one of these laravel-data validation attributes gets the matching `format`, in DTO schemas and in [query parameters](#queryparameters):
+
+| Attribute (`Spatie\LaravelData\Attributes\Validation\…`) | `format` |
+|---|---|
+| `#[Uuid]` | `uuid` |
+| `#[Date]` | `date` |
+| `#[Email]` | `email` |
+| `#[Url]` | `uri` |
+
+```php
+use Spatie\LaravelData\Attributes\Validation\Date;
+use Spatie\LaravelData\Attributes\Validation\Uuid;
+
+class UsageRequest extends Data
+{
+    public function __construct(
+        #[Uuid]
+        public string $organization_id,
+        #[Date]
+        public ?string $start_date = null,
+    ) {}
+}
+```
+
+Produces:
+
+```json
+{
+  "organization_id": { "type": "string", "format": "uuid" },
+  "start_date": { "type": "string", "format": "date" }
+}
+```
+
+The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. A schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter` is used as written.
 
 ### Optional Properties (`T|Optional`)
 

@@ -204,6 +204,32 @@ test('Optional union uses underlying type and omits property from request requir
 });
 
 // -------------------------------------------------------------------------
+// Formats from laravel-data validation attributes
+// -------------------------------------------------------------------------
+
+test('a string property with #[Uuid], #[Date], #[Email] or #[Url] gets that format', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
+    $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+
+    expect($props['organization_id']->format)->toBe('uuid')
+        ->and($props['start_date']->format)->toBe('date')
+        ->and($props['email']->format)->toBe('email')
+        ->and($props['website_url']->format)->toBe('uri')
+        ->and($props['name']->format)->toBe(Generator::UNDEFINED);
+});
+
+test('an array or a date-time property keeps its own format', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
+    $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+
+    expect($props['ids']->format)->toBe(Generator::UNDEFINED)
+        ->and(json_encode($props['ids']))->not->toContain('format')
+        ->and($props['created_at']->format)->toBe('date-time');
+});
+
+// -------------------------------------------------------------------------
 // DateTime / Carbon support
 // -------------------------------------------------------------------------
 

@@ -29,6 +29,10 @@ use Spatie\LaravelData\Attributes\DataCollectionOf;
 use Spatie\LaravelData\Attributes\FromRouteParameter;
 use Spatie\LaravelData\Attributes\FromRouteParameterProperty;
 use Spatie\LaravelData\Attributes\InjectsPropertyValue;
+use Spatie\LaravelData\Attributes\Validation\Date;
+use Spatie\LaravelData\Attributes\Validation\Email;
+use Spatie\LaravelData\Attributes\Validation\Url;
+use Spatie\LaravelData\Attributes\Validation\Uuid;
 use Spatie\LaravelData\Support\DataConfig;
 use Symfony\Component\Finder\Finder;
 
@@ -44,6 +48,18 @@ class DtoSchemaBuilder
         'Carbon\\CarbonImmutable',
         'Carbon\\CarbonInterface',
         'Illuminate\\Support\\Carbon',
+    ];
+
+    /**
+     * laravel-data validation attributes whose rule pins a string to an OpenAPI format.
+     * The rule applies to the property's value itself (laravel-data has no attribute for
+     * an array's elements), so only a string schema takes the format.
+     */
+    private const VALIDATION_FORMATS = [
+        Uuid::class => 'uuid',
+        Date::class => 'date',
+        Email::class => 'email',
+        Url::class => 'uri',
     ];
 
     /** @var string[] */
@@ -375,6 +391,7 @@ class DtoSchemaBuilder
             'groupedCollection' => $attributes->groupedCollection,
             'oneOfItemsFrom' => $attributes->oneOfItemsFrom,
             'envelopeField' => $attributes->envelopeField,
+            'format' => $attributes->format,
             'docComment' => $property->getDocComment() ?: null,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
@@ -452,6 +469,7 @@ class DtoSchemaBuilder
             'groupedCollection' => null,
             'oneOfItemsFrom' => null,
             'envelopeField' => false,
+            'format' => null,
         ];
 
         foreach ($reflectionAttributes as $attr) {
@@ -472,10 +490,27 @@ class DtoSchemaBuilder
                 $result->oneOfItemsFrom = $instance->group;
             } elseif ($instance instanceof DataCollectionOf) {
                 $result->collectionOf = $instance->class;
+            } elseif (($format = $this->validationFormat($instance)) !== null) {
+                $result->format = $format;
             }
         }
 
         return $result;
+    }
+
+    /**
+     * The format a laravel-data validation attribute (or a subclass of one) pins a string
+     * to, or null when it pins none.
+     */
+    private function validationFormat(object $attribute): ?string
+    {
+        foreach (self::VALIDATION_FORMATS as $class => $format) {
+            if ($attribute instanceof $class) {
+                return $format;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -874,6 +909,8 @@ class DtoSchemaBuilder
 
         if ($openApiType === 'number') {
             $props['format'] = 'float';
+        } elseif ($openApiType === 'string' && $meta->format !== null) {
+            $props['format'] = $meta->format;
         }
 
         if ($meta->description) {

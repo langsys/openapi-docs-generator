@@ -254,8 +254,19 @@ describe('parameters from a marked DTO', function () {
         qpAttacher()->attach(qpDocument($operation));
         $parameters = qpParameters($operation);
 
-        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search'])
+        expect(array_keys($parameters))->toBe(['workspace', 'filter', 'range[from]', 'search', 'owner_id', 'owners', 'project_ids[]'])
             ->and($parameters['workspace'])->not->toHaveKey('required');
+    });
+
+    test('a validation attribute\'s format lands on the string schema, not on an array', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect($parameters['owner_id']['schema'])->toBe(['type' => 'string', 'format' => 'uuid'])
+            ->and($parameters['owners']['schema']['oneOf'][0])->toBe(['type' => 'string', 'format' => 'uuid'])
+            ->and(json_encode($parameters['owners']['schema']['oneOf'][1]))->not->toContain('format')
+            ->and(json_encode($parameters['project_ids[]']))->not->toContain('format');
     });
 
     test('the matched route\'s action is inspected when the annotation sits elsewhere', function () {
