@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Str;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use OpenApi\Annotations as OA;
@@ -217,6 +218,23 @@ test('a string property with #[Uuid], #[Date], #[Email] or #[Url] gets that form
         ->and($props['email']->format)->toBe('email')
         ->and($props['website_url']->format)->toBe('uri')
         ->and($props['name']->format)->toBe(Generator::UNDEFINED);
+});
+
+test('a generated example fits the format, a declared one is used as written', function () {
+    $builder = new DtoSchemaBuilder(
+        dtoPaths: dirname(__DIR__, 2) . '/tests/Data',
+        exampleGenerator: new ExampleGenerator(fakerAttributeMapper: ['_at' => 'iso8601'], customFunctions: []),
+        paginationFields: [],
+    );
+    $schema = collect($builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'FormatTestData');
+    $props = collect($schema->properties)->keyBy(fn (OA\Property $p) => $p->property);
+
+    expect(Str::isUuid($props['organization_id']->example))->toBeTrue()
+        ->and($props['start_date']->example)->toMatch('/^\d{4}-\d{2}-\d{2}$/')
+        ->and($props['published_at']->example)->toMatch('/^\d{4}-\d{2}-\d{2}$/') // not the `_at` hint's date-time
+        ->and(filter_var($props['email']->example, FILTER_VALIDATE_EMAIL))->not->toBeFalse()
+        ->and(filter_var($props['website_url']->example, FILTER_VALIDATE_URL))->not->toBeFalse()
+        ->and($props['legacy_ref']->example)->toBe('legacy-ref');
 });
 
 test('an array or a date-time property keeps its own format', function () {

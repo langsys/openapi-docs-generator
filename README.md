@@ -475,7 +475,9 @@ Produces:
 }
 ```
 
-The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. A schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter` is used as written.
+The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse.
+
+An example the generator makes up always fits the format: when the one from the property's name doesn't (a `_at` hint's date-time on a `#[Date]` field, an empty string), Faker makes one that does. An `#[Example]` is used as written, and so is a schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter`.
 
 ### Optional Properties (`T|Optional`)
 

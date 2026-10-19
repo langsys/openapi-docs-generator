@@ -62,6 +62,14 @@ class DtoSchemaBuilder
         Url::class => 'uri',
     ];
 
+    /** The Faker function that makes an example of each format. */
+    private const FORMAT_EXAMPLES = [
+        'uuid' => ':uuid',
+        'date' => ':date',
+        'email' => ':safeEmail',
+        'uri' => ':url',
+    ];
+
     /** @var string[] */
     private array $dtoPaths;
 
@@ -499,6 +507,19 @@ class DtoSchemaBuilder
     }
 
     /**
+     * Whether a value is a valid string of the given format (one of VALIDATION_FORMATS).
+     */
+    private function fitsFormat(mixed $value, string $format): bool
+    {
+        return is_string($value) && match ($format) {
+            'uuid' => Str::isUuid($value),
+            'date' => preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1,
+            'email' => filter_var($value, FILTER_VALIDATE_EMAIL) !== false,
+            'uri' => filter_var($value, FILTER_VALIDATE_URL) !== false,
+        };
+    }
+
+    /**
      * The format a laravel-data validation attribute (or a subclass of one) pins a string
      * to, or null when it pins none.
      */
@@ -890,6 +911,12 @@ class DtoSchemaBuilder
     {
         $openApiType = $this->mapPhpTypeToOpenApi($meta->typeName);
         $example = $this->generateExample($meta);
+
+        // A generated example must fit the format; one the DTO declares is used as written.
+        if ($openApiType === 'string' && $meta->format !== null && $meta->example === null
+            && ! $this->fitsFormat($example, $meta->format)) {
+            $example = $this->exampleGenerator->{self::FORMAT_EXAMPLES[$meta->format]}(['type' => 'string']);
+        }
 
         // For bool, default to true if example is empty
         if ($openApiType === 'boolean' && ($example === '' || $example === null)) {

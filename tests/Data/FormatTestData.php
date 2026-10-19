@@ -3,6 +3,7 @@
 namespace Langsys\OpenApiDocsGenerator\Tests\Data;
 
 use Carbon\Carbon;
+use Langsys\OpenApiDocsGenerator\Generators\Attributes\Example;
 use Spatie\LaravelData\Attributes\Validation\Date;
 use Spatie\LaravelData\Attributes\Validation\Email;
 use Spatie\LaravelData\Attributes\Validation\Url;
@@ -25,6 +26,11 @@ class FormatTestData extends Data
         public array $ids,
         #[Date]
         public Carbon $created_at,
+        #[Date]
+        public string $published_at,
+        #[Uuid]
+        #[Example('legacy-ref')]
+        public string $legacy_ref,
         public string $name,
     ) {}
 }
