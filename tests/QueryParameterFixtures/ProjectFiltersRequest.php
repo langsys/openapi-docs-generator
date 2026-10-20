@@ -16,7 +16,8 @@ use Spatie\LaravelData\Data;
  * computed ones (#[Computed] and a subclass of it), injected ones, a nested Data class
  * and a dotted input name; and #[Uuid] on a string, a union and an array, a
  * #[DateFormat('Y-m-d')] date, and #[Uuid] with a Faker #[Example] that does not fit it
- * (string, union, mixed). `search` is also read by ListProjectsRequest.
+ * (string, union, mixed); the array carries a list #[Example]. `search` is also read by
+ * ListProjectsRequest.
  */
 #[QueryParameters]
 class ProjectFiltersRequest extends Data
@@ -40,7 +41,7 @@ class ProjectFiltersRequest extends Data
         public ?string $owner_id = null,
         #[Uuid]
         public string|array|null $owners = null,
-        #[Uuid]
+        #[Uuid, Example(['0b7e7dee-87ac-4f5e-9d3b-6a1d4c1d2e3f', '6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f'])]
         public array $project_ids = [],
         #[DateFormat('Y-m-d')]
         public ?string $since = null,

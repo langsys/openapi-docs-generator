@@ -174,6 +174,30 @@ public string $title,
 public int $score,
 ```
 
+**Arrays**: an array property's example can be an array. On a list it is the list's example, and the items take its first element. On a string-keyed map (`@var array<string, T>`, documented as an object) it is the object's example:
+
+```php
+#[Example(['203.0.113.0/24', '198.51.100.7'])]
+public array $ip_allowlist,
+
+/** @var array<string, mixed> */
+#[Example(['browser' => 'Safari 18.1', 'os' => 'macOS 15.1'])]
+public array $device_info,
+```
+
+```json
+{
+  "ip_allowlist": {
+    "type": "array",
+    "items": { "type": "string", "example": "203.0.113.0/24" },
+    "example": ["203.0.113.0/24", "198.51.100.7"]
+  },
+  "device_info": { "type": "object", "example": { "browser": "Safari 18.1", "os": "macOS 15.1" } }
+}
+```
+
+A scalar example on a list is its items' example. A list's items take their type from their example: `integer`, `number`, `boolean`, `object` for a keyed array, and `string` otherwise.
+
 ### `#[Description]`
 
 Add a description to a property.
@@ -310,8 +334,8 @@ An operation whose action takes `ListProjectsRequest` gets one `in: query` param
 
 - **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. A dotted input name reads nested input, so it is written as a query string nests it: `#[MapInputName('range.from')]` is `range[from]`. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) or a nested Data class is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
 - **Required**: only when the property is non-nullable, has no default and is not `Optional`.
-- **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept, a [validation attribute](#formats-from-validation-attributes) gives a string its `format`). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
-- **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it.
+- **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept, a nullable type is `nullable`, a [validation attribute](#formats-from-validation-attributes) gives a string its `format`). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
+- **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it. An array example is used as written; a scalar one on an array becomes a one-item list.
 - **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint.
 - **Left out**: a property with `#[Omit]`, a `#[Computed]` one (or a subclass of it), and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
 
@@ -345,7 +369,7 @@ The generator handles these types automatically:
 | `Carbon`, `DateTime`, etc. | `{ "type": "string", "format": "date-time" }` |
 | `string` with `#[Uuid]`, `#[Date]`, `#[DateFormat]`, `#[Email]`, `#[Url]` | `{ "type": "string", "format": "uuid" }` (see [Formats](#formats-from-validation-attributes)) |
 | `string\|Optional` (Laravel Data) | `{ "type": "string" }` — excluded from `required` |
-| Nullable (`?string`) | Tracked as not required |
+| Nullable (`?string`, `?array`, `?SomeData`, a union with `null`, `mixed`) | `"nullable": true` on whatever the type maps to; not required |
 | Default values | Included as `"default": value` |
 
 ### Enum Example
@@ -479,7 +503,7 @@ Produces:
 
 The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse; `#[DateFormat('Y-m-d')]` enforces it. A `#[DateFormat]` with any other format (`'c'` included: PHP cannot parse with it, so that rule accepts nothing), or with several that don't map to the same format, gets none. On a property that has both, `#[DateFormat]` decides over `#[Date]`.
 
-An example the generator makes up always fits the format: when the one from the property's name or an `#[Example(':faker')]` reference doesn't (a `_at` hint's date-time on a `#[Date]` field, an empty string), Faker makes one that does, a date in the `#[DateFormat]`'s own PHP format. A literal `#[Example]` is used as written, and so is a schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter`.
+An example the generator makes up always fits the format: when the one from the property's name or an `#[Example(':faker')]` reference doesn't (a `_at` hint's date-time on a `#[Date]` field, or the [fallback word](#3-direct-faker-fallback) of a name Faker doesn't know), Faker makes one that does, a date in the `#[DateFormat]`'s own PHP format. A literal `#[Example]` is used as written, and so is a schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter`.
 
 ### Optional Properties (`T|Optional`)
 
@@ -946,7 +970,7 @@ An operation's errors are the union of all sources, deduplicated by class, then 
 | One | `$ref` to `#/components/responses/{Name}` |
 | Several | Inline response with the envelope's `status` and `data`, whose `error` property is a `oneOf` of their `{Name}Body` schemas with `discriminator: { propertyName: code, mapping: { … } }`. The discriminator sits on `error` because OpenAPI 3.0 only discriminates on a top-level property of each variant. The media type also carries one named example per error, keyed by its code. |
 
-**Every possible body is shown.** A `oneOf` alone renders as a single synthesized body, which reads as though it were the only answer a client can get. So a shared status also carries one example per error, keyed by its code and ordered as the list above it, and a renderer that supports multiple examples offers a switcher between them. Each entry's `summary` is the bare code, for the switcher's list, and its `description` repeats that error's `` `code`: MESSAGE `` line, so a renderer showing example metadata says which error is on screen. Each example is a whole response body, built from the examples the error's own schemas advertise: the filled message, the code, the template and its typed details. An array property becomes a one-item list from its items' example, which is where a scalar `#[Example]` on an array sits. A property with no example anywhere is left out rather than invented, so a field your app owns never shows made-up content.
+**Every possible body is shown.** A `oneOf` alone renders as a single synthesized body, which reads as though it were the only answer a client can get. So a shared status also carries one example per error, keyed by its code and ordered as the list above it, and a renderer that supports multiple examples offers a switcher between them. Each entry's `summary` is the bare code, for the switcher's list, and its `description` repeats that error's `` `code`: MESSAGE `` line, so a renderer showing example metadata says which error is on screen. Each example is a whole response body, built from the examples the error's own schemas advertise: the filled message, the code, the template and its typed details. An array property uses its own example when it has one (an array `#[Example]`), and otherwise becomes a one-item list from its items' example, which is where a scalar `#[Example]` on an array sits. A property with no example anywhere is left out rather than invented, so a field your app owns never shows made-up content.
 
 A response the author wrote for that status always wins, the same precedence DTO schemas follow. Generation fails when `#[Throws]`, `implied_errors` or a rule names a class that is not a documented error: not a concrete subclass of `errors.base_class`, or never scanned. The message says which.
 
@@ -1073,7 +1097,7 @@ Custom functions receive the property type as their first argument.
 
 ### 3. Direct Faker Fallback
 
-If no mapper pattern matches and no custom function exists, the property name itself is tried as a Faker method (converted to camelCase). So a property named `first_name` automatically calls `Faker::firstName()`. If that fails, it falls back to `0` for integers or an empty string for everything else.
+If no mapper pattern matches and no custom function exists, the property name itself is tried as a Faker method (converted to camelCase). So a property named `first_name` automatically calls `Faker::firstName()`. If that fails, or gives a value of the wrong type or an empty string, the example falls back to `0` for a number, `false` for a boolean, and a Faker word for anything else (a string, or an array's items). A generated example is never empty.
 
 ### Invoking Faker Directly from `#[Example]`
 

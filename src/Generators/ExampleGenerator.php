@@ -83,17 +83,21 @@ class ExampleGenerator
             'int'    => is_int($value),
             'float'  => is_float($value) || is_int($value),
             'bool'   => is_bool($value),
-            default  => is_string($value),
+            default  => is_string($value) && $value !== '',
         };
     }
 
+    /**
+     * The example when nothing produced one of the property's type. Never an empty
+     * string: a string (and an array's item) gets a Faker word.
+     */
     private function _defaultFor(string $propertyType): string|int|float|bool
     {
         return match ($propertyType) {
             'int'    => 0,
             'float'  => 0.0,
             'bool'   => false,
-            default  => '',
+            default  => $this->faker->word(),
         };
     }
 }

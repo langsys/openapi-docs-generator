@@ -16,6 +16,11 @@ class BadlyTypedCustomFunctions
     {
         return 'not an int';
     }
+
+    public function blank(string $type): string
+    {
+        return '';
+    }
 }
 
 test('mapper hint routing to a custom function works for int properties', function () {
@@ -71,16 +76,31 @@ test('unmapped int property returns default 0 on faker miss', function () {
     expect($generator->count(['type' => 'int']))->toBe(0);
 });
 
-test('unmapped string property returns default empty string on faker miss', function () {
+test('unmapped string property falls back to a non-empty word on faker miss', function () {
     $generator = new ExampleGenerator();
 
-    expect($generator->definitely_no_such_faker(['type' => 'string']))->toBe('');
+    expect($generator->definitely_no_such_faker(['type' => 'string']))->toBeString()->not->toBeEmpty();
+});
+
+test('an array property falls back to a non-empty word for its items on faker miss', function () {
+    $generator = new ExampleGenerator();
+
+    expect($generator->ip_allowlist(['type' => 'array']))->toBeString()->not->toBeEmpty();
+});
+
+test('an empty string from a custom function falls back to a non-empty word', function () {
+    $generator = new ExampleGenerator(
+        fakerAttributeMapper: ['_code' => 'blank'],
+        customFunctions: ['blank' => [BadlyTypedCustomFunctions::class, 'blank']],
+    );
+
+    expect($generator->gate_code(['type' => 'string']))->toBeString()->not->toBeEmpty();
 });
 
 test('default type is treated as string', function () {
     $generator = new ExampleGenerator();
 
-    expect($generator->somefakerthatdoesntexist([[]]))->toBe('');
+    expect($generator->somefakerthatdoesntexist([[]]))->toBeString()->not->toBeEmpty();
 });
 
 test('faker function prefix bypasses the mapper', function () {

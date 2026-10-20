@@ -186,7 +186,26 @@ describe('parameters from a marked DTO', function () {
             ->and($parameters['status']['description'])->toBe('Only projects in this status')
             ->and($parameters['status'])->not->toHaveKey('example')
             ->and($parameters['ids[]']['example'])->toBe([42])
+            ->and($parameters['meta']['example'])->toBe(['source' => 'import'])
             ->and($parameters['page'])->not->toHaveKeys(['description', 'example']);
+    });
+
+    test('an array #[Example] on a list is the parameter\'s example as written', function () {
+        $operation = qpOperation('filtered');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameter = qpParameters($operation)['project_ids[]'];
+
+        expect($parameter['example'])->toBe(['0b7e7dee-87ac-4f5e-9d3b-6a1d4c1d2e3f', '6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f'])
+            ->and($parameter['schema'])->toBe(['type' => 'array', 'items' => ['type' => 'string']]);
+    });
+
+    test('a nullable property\'s schema is nullable', function () {
+        $operation = qpOperation('index');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect($parameters['search']['schema'])->toBe(['type' => 'string', 'nullable' => true])
+            ->and($parameters['cursor']['schema'])->toBe(['type' => 'string']);
     });
 
     test('the name is the input name a MapInputName attribute gives', function () {
@@ -231,7 +250,7 @@ describe('parameters from a marked DTO', function () {
         expect(qpParameters($operation)['filter'])->toMatchArray([
             'style' => 'deepObject',
             'explode' => true,
-            'schema' => ['allOf' => [['$ref' => '#/components/schemas/ProjectFilter']]],
+            'schema' => ['allOf' => [['$ref' => '#/components/schemas/ProjectFilter']], 'nullable' => true],
         ]);
     });
 
@@ -264,11 +283,11 @@ describe('parameters from a marked DTO', function () {
         qpAttacher()->attach(qpDocument($operation));
         $parameters = qpParameters($operation);
 
-        expect($parameters['owner_id']['schema'])->toBe(['type' => 'string', 'format' => 'uuid'])
+        expect($parameters['owner_id']['schema'])->toBe(['type' => 'string', 'format' => 'uuid', 'nullable' => true])
             ->and($parameters['owners']['schema']['oneOf'][0])->toBe(['type' => 'string', 'format' => 'uuid'])
             ->and(json_encode($parameters['owners']['schema']['oneOf'][1]))->not->toContain('format')
             ->and(json_encode($parameters['project_ids[]']))->not->toContain('format')
-            ->and($parameters['since']['schema'])->toBe(['type' => 'string', 'format' => 'date']);
+            ->and($parameters['since']['schema'])->toBe(['type' => 'string', 'format' => 'date', 'nullable' => true]);
     });
 
     test('a Faker #[Example] that does not fit the format is replaced by one that does', function () {
@@ -278,7 +297,7 @@ describe('parameters from a marked DTO', function () {
 
         expect(Str::isUuid($parameters['owner_ref']['example']))->toBeTrue()
             ->and(Str::isUuid($parameters['owner_refs']['example']))->toBeTrue()
-            ->and($parameters['owner_any']['schema'])->toBe(['type' => 'string', 'format' => 'uuid'])
+            ->and($parameters['owner_any']['schema'])->toBe(['type' => 'string', 'format' => 'uuid', 'nullable' => true])
             ->and(Str::isUuid($parameters['owner_any']['example']))->toBeTrue();
     });
 

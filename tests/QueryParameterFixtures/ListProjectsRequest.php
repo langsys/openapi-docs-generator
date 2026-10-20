@@ -23,6 +23,7 @@ class ListProjectsRequest extends ListRequest
         public bool $includeArchived = false,
         public string|int $owner = 'me',
         /** @var array<string, string> */
+        #[Example(['source' => 'import'])]
         public array $meta = [],
         #[Omit]
         public ?string $internal = null,

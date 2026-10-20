@@ -392,6 +392,8 @@ class DtoSchemaBuilder
         }
 
         $hasDefault = $defaultValue !== null || $this->propertyHasDefault($property);
+        // The declared type, not the member a union resolves to: `string|array|null` allows null.
+        $nullable = ($memberType ?? $property->getType())->allowsNull();
 
         return (object) [
             'name' => $property->getName(),
@@ -411,8 +413,8 @@ class DtoSchemaBuilder
             'docComment' => $property->getDocComment() ?: null,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
-            'nullable' => $type->allowsNull(),
-            'required' => !$type->allowsNull() && !$this->propertyDeclaresLaravelDataOptional($property) && !$hasDefault,
+            'nullable' => $nullable,
+            'required' => !$nullable && !$this->propertyDeclaresLaravelDataOptional($property) && !$hasDefault,
         ];
     }
 
@@ -534,8 +536,7 @@ class DtoSchemaBuilder
      */
     private function fitExample(mixed $example, object $meta): mixed
     {
-        $generated = $meta->example === null
-            || str_starts_with((string) $meta->example, ExampleGenerator::FAKER_FUNCTION_PREFIX);
+        $generated = $meta->example === null || $this->isFakerReference($meta->example);
 
         return $meta->format !== null && $generated && ! $this->fitsFormat($example, $meta)
             ? $this->formatExample($meta)
@@ -714,9 +715,24 @@ class DtoSchemaBuilder
     // -------------------------------------------------------------------------
 
     /**
-     * Build a single OA\Property from extracted metadata.
+     * Build a single OA\Property from extracted metadata. Whatever its shape, a property
+     * whose type allows null is `nullable`.
      */
     private function buildProperty(object $meta): OA\Property
+    {
+        $property = $this->buildTypedProperty($meta);
+
+        if ($meta->nullable) {
+            $property->nullable = true;
+        }
+
+        return $property;
+    }
+
+    /**
+     * The OA\Property for the property's type.
+     */
+    private function buildTypedProperty(object $meta): OA\Property
     {
         $typeName = $meta->typeName;
         $type = $meta->type;
@@ -801,10 +817,6 @@ class DtoSchemaBuilder
             $props['default'] = $meta->defaultValue;
         }
 
-        if ($meta->nullable) {
-            $props['nullable'] = true;
-        }
-
         return new OA\Property($props);
     }
 
@@ -844,10 +856,6 @@ class DtoSchemaBuilder
             $props['default'] = $meta->defaultValue;
         } elseif ($meta->hasDefault && $meta->defaultValue === null) {
             $props['default'] = null;
-        }
-
-        if ($meta->nullable) {
-            $props['nullable'] = true;
         }
 
         return new OA\Property($props);
@@ -951,10 +959,15 @@ class DtoSchemaBuilder
     }
 
     /**
-     * Build a property for a plain array type.
+     * Build a property for a plain array type: an object for a string-keyed map
+     * (`@var array<string, T>`), otherwise a list. An array #[Example] is the property's
+     * example, and a list's items take its first element; otherwise the items get a
+     * scalar example, and an object none.
      */
     private function buildArrayProperty(object $meta): OA\Property
     {
+        $arrayExample = is_array($meta->example) ? $meta->example : null;
+
         $valueSchema = $this->resolveStringMapValueFromDocBlock($meta->docComment ?? null);
         if ($valueSchema !== null) {
             $props = [
@@ -964,6 +977,9 @@ class DtoSchemaBuilder
             if ($valueSchema !== []) { // array<string, mixed>: a free-form object
                 $props['additionalProperties'] = new OA\AdditionalProperties($valueSchema);
             }
+            if ($arrayExample !== null) {
+                $props['example'] = $arrayExample;
+            }
             if ($meta->description) {
                 $props['description'] = $meta->description;
             }
@@ -971,22 +987,51 @@ class DtoSchemaBuilder
             return new OA\Property($props);
         }
 
-        $example = $this->generateExample($meta);
+        if ($arrayExample === null) {
+            $example = $this->generateExample($meta);
+        } else {
+            $example = $arrayExample === [] ? null : $arrayExample[array_key_first($arrayExample)];
+        }
+
+        $items = [];
+        if (($itemType = $this->itemType($example)) !== null) {
+            $items['type'] = $itemType;
+        }
+        if ($example !== null) {
+            $items['example'] = $example;
+        }
 
         $props = [
             'property' => $meta->name,
             'type' => 'array',
-            'items' => new OA\Items([
-                'type' => gettype($example) === 'integer' ? 'integer' : 'string',
-                'example' => $example,
-            ]),
+            'items' => new OA\Items($items),
         ];
+
+        if ($arrayExample !== null) {
+            $props['example'] = $arrayExample;
+        }
 
         if ($meta->description) {
             $props['description'] = $meta->description;
         }
 
         return new OA\Property($props);
+    }
+
+    /**
+     * The type of a plain array's items, read from their example: a keyed array is an
+     * object, a list leaves the type unstated (an `array` item schema would need items of
+     * its own), and a string or no example is a string.
+     */
+    private function itemType(mixed $example): ?string
+    {
+        return match (true) {
+            is_int($example) => 'integer',
+            is_float($example) => 'number',
+            is_bool($example) => 'boolean',
+            is_array($example) => array_is_list($example) ? null : 'object',
+            default => 'string',
+        };
     }
 
     /**
@@ -1327,7 +1372,7 @@ class DtoSchemaBuilder
         $arguments = $meta->exampleArguments;
 
         // If there is an explicit example that is not a faker function reference, use it directly
-        if ($example !== null && !str_starts_with((string) $example, ExampleGenerator::FAKER_FUNCTION_PREFIX)) {
+        if ($example !== null && !$this->isFakerReference($example)) {
             return $example;
         }
 
@@ -1341,6 +1386,14 @@ class DtoSchemaBuilder
         }
 
         return $this->exampleGenerator->$exampleFunction($arguments);
+    }
+
+    /**
+     * Whether an #[Example] value is a `:faker` function reference rather than a literal.
+     */
+    private function isFakerReference(mixed $example): bool
+    {
+        return is_string($example) && str_starts_with($example, ExampleGenerator::FAKER_FUNCTION_PREFIX);
     }
 
     // -------------------------------------------------------------------------

@@ -364,6 +364,67 @@ test('non-nullable property with default is omitted from required[] and not flag
 });
 
 // -------------------------------------------------------------------------
+// A property whose type allows null is nullable, whatever its shape, and an
+// example nothing produced still has a value.
+// -------------------------------------------------------------------------
+
+test('a property whose type allows null is nullable, whatever its shape', function () {
+    $schema = collect($this->builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'NullableRequest');
+    $props = json_decode(json_encode($schema), true)['properties'];
+
+    foreach (['code_verifier', 'retry_count', 'ratio', 'gate', 'ip_allowlist', 'device_info', 'order_by', 'handoff', 'example', 'examples', 'payload'] as $name) {
+        expect($props[$name]['nullable'] ?? null)->toBeTrue("{$name} should be nullable");
+    }
+
+    expect($props['name'])->not->toHaveKey('nullable')
+        ->and($props['device_info']['type'])->toBe('object')
+        ->and($props['order_by']['type'])->toBe('array')
+        ->and($props['example']['allOf'][0]['$ref'])->toBe('#/components/schemas/ExampleData')
+        ->and($props['examples']['items']['allOf'][0]['$ref'])->toBe('#/components/schemas/ExampleData');
+});
+
+test('a nullable union is not required, like any nullable property', function () {
+    $schema = collect($this->builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'NullableRequest');
+
+    expect($schema->required)->toBe(['name']);
+});
+
+test('an example no Faker function or hint produces is never empty', function () {
+    $schema = collect($this->builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'NullableRequest');
+    $props = json_decode(json_encode($schema), true)['properties'];
+
+    expect($props['code_verifier']['example'])->toBeString()->not->toBeEmpty()
+        ->and($props['handoff']['example'])->toBeString()->not->toBeEmpty()
+        ->and($props['payload']['example'])->toBeString()->not->toBeEmpty()
+        ->and($props['ip_allowlist']['items'])->toMatchArray(['type' => 'string'])
+        ->and($props['ip_allowlist']['items']['example'])->toBeString()->not->toBeEmpty()
+        ->and($props['order_by']['items']['example'])->toBeString()->not->toBeEmpty()
+        ->and($props['retry_count']['example'])->toBe(0)
+        ->and($props['gate']['example'])->toBeBool();
+});
+
+test('an array #[Example] is an object\'s example, and a list\'s, whose items take its first element', function () {
+    $schema = collect($this->builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'ArrayExampleData');
+    $props = json_decode(json_encode($schema), true)['properties'];
+
+    expect($props['device_info'])->toBe([
+        'type' => 'object',
+        'example' => ['browser' => 'Safari 18.1', 'os' => 'macOS 15.1'],
+    ])
+        ->and($props['ip_allowlist'])->toMatchArray([
+            'type' => 'array',
+            'items' => ['type' => 'string', 'example' => '203.0.113.0/24'],
+            'example' => ['203.0.113.0/24', '198.51.100.7'],
+        ])
+        ->and($props['weights']['items'])->toBe(['type' => 'number', 'example' => 1.5])
+        ->and($props['entries']['items'])->toBe(['type' => 'object', 'example' => ['id' => 'a1']])
+        ->and($props['tags']['example'])->toBe([])
+        ->and($props['tags']['items'])->toBe(['type' => 'string'])
+        ->and($props['ranges']['items'])->toBe(['type' => 'string', 'example' => '203.0.113.0/24'])
+        ->and($props['ranges'])->not->toHaveKey('example');
+});
+
+// -------------------------------------------------------------------------
 // #[ItemType] / #[OneOfItemsFrom] — polymorphic arrays of DTO variants
 // -------------------------------------------------------------------------
 
