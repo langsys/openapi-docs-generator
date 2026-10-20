@@ -196,7 +196,7 @@ public array $device_info,
 }
 ```
 
-A scalar example on a list is its items' example. A list's items take their type from their example: `integer`, `number`, `boolean`, `object` for a keyed array, no type for a nested list, and `string` otherwise. An array example must match the property: keys for a string map, none for a list (an empty one fits either), and nothing but an array property takes one. Otherwise generation fails, naming the property.
+A scalar example on a list is its items' example. A list's items take their type from their example: `integer`, `number`, `boolean`, `object` for a keyed array, no type for a nested list, and `string` otherwise. An array example must match the property: keys for a string map, none for a list (an empty one fits either). Only a property that takes an array can have one (a union with `array` included), and not a collection of Data classes, whose schema documents the items. Otherwise generation fails, naming the property.
 
 ### `#[Description]`
 
@@ -335,7 +335,7 @@ An operation whose action takes `ListProjectsRequest` gets one `in: query` param
 - **Name**: the property's input name, after `MapInputName` / `MapName` and the app's input name mapping. A dotted input name reads nested input, so it is written as a query string nests it: `#[MapInputName('range.from')]` is `range[from]`. An array is named `ids[]`, the form PHP reads a repeated key into an array from. A string-keyed map (`@var array<string, T>`) or a nested Data class is a `deepObject`, sent as `meta[key]=…`. A union keeps its plain name.
 - **Required**: only when the property is non-nullable, has no default and is not `Optional`.
 - **Schema**: the property's type, mapped as in a DTO schema (an enum lists its values, a default is kept, a nullable type is `nullable`, a [validation attribute](#formats-from-validation-attributes) gives a string its `format`). A union is a `oneOf` of its members, scalars first, so `string|array` reads as a string or an array of strings.
-- **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it. An array example is used as written; a scalar one on an array becomes a one-item list.
+- **Description and example**: from `#[Description]` and `#[Example]`. No example is generated, so a parameter shows one only when its DTO declares it, and then the one its DTO schema shows: an array example as written, a scalar one on an array as a one-item list, none on a nested Data class or (unless it is an array) a string map, an integer's cast to one, and on an enum one of its cases, picked at random when the declared value isn't one. A union shows the example as declared.
 - **Order**: inherited properties first, so the parameters a base DTO shares sit in the same place on every endpoint.
 - **Left out**: a property with `#[Omit]`, a `#[Computed]` one (or a subclass of it), and one laravel-data fills from elsewhere over what the request sends (`#[FromRouteParameter]`, `#[FromAuthenticatedUser]`, `#[FromContainer]` and their `*Property` forms). One that yields to a value in the request (`replaceWhenPresentInPayload: false`) is documented, and is never required.
 
@@ -345,7 +345,7 @@ An operation whose action takes `ListProjectsRequest` gets one `in: query` param
 #[OA\Parameter(parameter: 'page', name: 'page', in: 'query', description: 'Page to request', schema: new OA\Schema(type: 'integer'))]
 ```
 
-**Never documented twice.** If an operation already documents a query parameter of the same name by hand (inline or by `$ref`, on the operation or its path item, with or without `[]`), generation fails with a message naming the action and the parameter. So does a name that two marked Data parameters of one action, or two properties of one DTO, both read.
+**Never documented twice.** If an operation already documents a query parameter of the same name by hand (inline or by `$ref`, on the operation or its path item, with or without `[]`), generation fails with a message naming the action and the parameter. So does a name that two marked Data parameters of one action, or two properties of one DTO, both read. A name that reads inside an object another one sends counts as the same: `filter[name]` next to a `deepObject` `filter`.
 
 The action inspected is the annotated method, or the matched route's action when the `@OA` annotation sits on a different method. An action taking a Data class without the attribute gets no parameters from it.
 
@@ -501,7 +501,7 @@ Produces:
 }
 ```
 
-The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse; `#[DateFormat('Y-m-d')]` enforces it. A `#[DateFormat]` with any other format (`'c'` included: PHP cannot parse with it, so that rule accepts nothing), or with several that don't map to the same format, gets none. On a property that has both, `#[DateFormat]` decides over `#[Date]`.
+The format goes on a string schema only; in a union, on its string member. The rule validates the property's value itself, and laravel-data has no attribute for an array's elements, so an array property gets no format, and a `Carbon`/`DateTime` property keeps `date-time`, the form it serializes to. As a query parameter, which is only ever input, a `Carbon`/`DateTime` property takes the format its `#[DateFormat]` maps to (`date` for `Y-m-d`), the form the request has to send; `#[Date]` leaves it `date-time`. `#[Date]` is documented as a calendar date (`YYYY-MM-DD`), the form clients should send, although Laravel's `date` rule accepts any date it can parse; `#[DateFormat('Y-m-d')]` enforces it. A `#[DateFormat]` with any other format (`'c'` included: PHP cannot parse with it, so that rule accepts nothing), or with several that don't map to the same format, gets none. On a property that has both, `#[DateFormat]` decides over `#[Date]`.
 
 An example the generator makes up always fits the format: when the one from the property's name or an `#[Example(':faker')]` reference doesn't (a `_at` hint's date-time on a `#[Date]` field, or the [fallback word](#3-direct-faker-fallback) of a name Faker doesn't know), Faker makes one that does, a date in the `#[DateFormat]`'s own PHP format. A literal `#[Example]` is used as written, and so is a schema or shared parameter written by hand with `@OA\Schema` / `@OA\Parameter`.
 

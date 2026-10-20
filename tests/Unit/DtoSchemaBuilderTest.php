@@ -437,6 +437,8 @@ function buildArrayExampleFixture(string $class, string $property): void
 <?php
 namespace ArrayExampleFixture;
 use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Example;
+use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Omit;
+use Langsys\\OpenApiDocsGenerator\\Tests\\Data\\ExampleData;
 use Spatie\\LaravelData\\Data;
 class {$class} extends Data
 {
@@ -456,9 +458,9 @@ PHP);
 }
 
 describe('an array #[Example] that does not fit the property fails generation', function () {
-    test('on a property that is not a plain array', function () {
+    test('on a property that takes no array', function () {
         expect(fn () => buildArrayExampleFixture('ScalarArrayExample', "#[Example(['a', 'b'])] public string \$name"))
-            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\ScalarArrayExample::$name is an array, which only a plain array property takes');
+            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\ScalarArrayExample::$name is an array, which only a property that takes an array can have');
     });
 
     test('with keys, on a list', function () {
@@ -469,6 +471,21 @@ describe('an array #[Example] that does not fit the property fails generation', 
     test('as a list, on a string map', function () {
         expect(fn () => buildArrayExampleFixture('ListMapExample', "/** @var array<string, mixed> */ #[Example(['a', 'b'])] public array \$device_info"))
             ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\ListMapExample::$device_info is a list, but the property is a string map');
+    });
+
+    test('on a collection of Data, whose class documents its items', function () {
+        expect(fn () => buildArrayExampleFixture('CollectionArrayExample', "/** @var array<string, ExampleData> */ #[Example(['a' => 'b'])] public array \$examples"))
+            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\CollectionArrayExample::$examples is an array, but the property is a collection of Langsys\\OpenApiDocsGenerator\\Tests\\Data\\ExampleData, whose schema documents its items; leave the example out.');
+    });
+
+    test('but not on a union that takes an array, whatever it resolves to', function () {
+        expect(fn () => buildArrayExampleFixture('UnionArrayExample', "#[Example(['a', 'b'])] public ExampleData|array \$value"))
+            ->not->toThrow(OpenApiDocsException::class);
+    });
+
+    test('but not on an omitted property', function () {
+        expect(fn () => buildArrayExampleFixture('OmittedArrayExample', "#[Omit, Example(['a' => 1])] public array \$hidden"))
+            ->not->toThrow(OpenApiDocsException::class);
     });
 
     test('but an empty one fits a string map', function () {

@@ -31,7 +31,8 @@ class ProjectFiltersRequest extends Data
     public function __construct(
         #[FromRouteParameter('project')]
         public string $project,
-        #[FromRouteParameter('workspace', replaceWhenPresentInPayload: false)]
+        // Positional: the flag is `replaceWhenPresentInBody` before laravel-data 4.12.
+        #[FromRouteParameter('workspace', false)]
         public string $workspace,
         public ?ProjectFilter $filter = null,
         #[MapInputName('range.from')]

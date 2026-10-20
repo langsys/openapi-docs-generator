@@ -391,8 +391,8 @@ class DtoSchemaBuilder
             $collectionOf = $this->resolveCollectionOfFromDocBlock($property);
         }
 
-        if ($memberType === null && is_array($attributes->example)) {
-            $this->assertArrayExampleFits($property, $typeName, $collectionOf, $attributes);
+        if ($memberType === null && ! $attributes->omit && is_array($attributes->example)) {
+            $this->assertArrayExampleFits($property, $collectionOf, $attributes);
         }
 
         $hasDefault = $defaultValue !== null || $this->propertyHasDefault($property);
@@ -414,6 +414,7 @@ class DtoSchemaBuilder
             'envelopeField' => $attributes->envelopeField,
             'format' => $attributes->format,
             'dateFormats' => $attributes->dateFormats,
+            'exactDateFormat' => $attributes->exactDateFormat,
             'docComment' => $property->getDocComment() ?: null,
             'defaultValue' => $defaultValue,
             'hasDefault' => $hasDefault,
@@ -423,21 +424,30 @@ class DtoSchemaBuilder
     }
 
     /**
-     * An array #[Example] is the example of a plain array (or of a union resolved to
-     * one), so it must have that array's shape: keys for a string map (`@var
-     * array<string, T>`, an object), none for a list. Anywhere else it would contradict
-     * the schema, so generation fails instead.
+     * An array #[Example] is the example of a property that takes an array, so it must
+     * have that array's shape: keys for a string map (`@var array<string, T>`, an
+     * object), none for a list. On a property that takes no array it would contradict
+     * the schema, and on a collection of Data or #[OneOfItemsFrom] variants the item
+     * schemas document the items, so generation fails instead.
      *
      * @throws OpenApiDocsException
      */
-    private function assertArrayExampleFits(ReflectionProperty $property, string $typeName, ?string $collectionOf, object $attributes): void
+    private function assertArrayExampleFits(ReflectionProperty $property, ?string $collectionOf, object $attributes): void
     {
         $example = $attributes->example;
         $where = sprintf('#[Example] on %s::$%s', $property->getDeclaringClass()->getName(), $property->getName());
 
-        if ($typeName !== 'array' || $collectionOf !== null || $attributes->oneOfItemsFrom !== null) {
+        if ($collectionOf !== null || $attributes->oneOfItemsFrom !== null) {
             throw new OpenApiDocsException(sprintf(
-                '%s is an array, which only a plain array property takes (a list, or a string map declared `@var array<string, T>`); give it a scalar example.',
+                '%s is an array, but the property is a collection of %s, whose schema documents its items; leave the example out.',
+                $where,
+                $collectionOf ?? sprintf("the #[OneOfItemsFrom('%s')] variants", $attributes->oneOfItemsFrom),
+            ));
+        }
+
+        if (! $this->takesArray($property)) {
+            throw new OpenApiDocsException(sprintf(
+                '%s is an array, which only a property that takes an array can have (a list, or a string map declared `@var array<string, T>`); give it a scalar example.',
                 $where,
             ));
         }
@@ -461,6 +471,24 @@ class DtoSchemaBuilder
                 $where,
             ));
         }
+    }
+
+    /**
+     * Whether the property's declared type, or a member of its union, is `array` or a
+     * Collection, whatever member the union resolves to.
+     */
+    private function takesArray(ReflectionProperty $property): bool
+    {
+        $type = $property->getType();
+
+        foreach ($type instanceof ReflectionUnionType ? $type->getTypes() : [$type] as $member) {
+            if ($member instanceof ReflectionNamedType
+                && in_array($member->getName(), ['array', Collection::class], true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -534,6 +562,7 @@ class DtoSchemaBuilder
             'envelopeField' => false,
             'format' => null,
             'dateFormats' => [],
+            'exactDateFormat' => false,
         ];
         $dateFormat = null;
 
@@ -567,6 +596,7 @@ class DtoSchemaBuilder
         // example has to match.
         if ($dateFormat !== null) {
             [$result->format, $result->dateFormats] = $this->readDateFormat($dateFormat);
+            $result->exactDateFormat = true;
         } elseif ($result->format === 'date') {
             $result->dateFormats = ['Y-m-d'];
         }
@@ -1198,7 +1228,7 @@ class DtoSchemaBuilder
             }
 
             $type = $prop->getType();
-            $schema = $this->buildQueryParameterSchema($prop, $meta);
+            [$schema, $example] = $this->buildQueryParameterSchema($prop, $meta);
 
             $props = [
                 'name' => $this->queryName($inputNames[$meta->name] ?? $meta->name),
@@ -1217,14 +1247,8 @@ class DtoSchemaBuilder
                 $props['description'] = $meta->description;
             }
 
-            if ($meta->example !== null) {
-                $example = $this->generateExample($meta);
-
-                if ($this->allowsString($prop)) {
-                    $example = $this->fitExample($example, $meta);
-                }
-
-                $props['example'] = $schema->type === 'array' && ! is_array($example) ? [$example] : $example;
+            if ($example !== null) {
+                $props['example'] = $example;
             }
 
             $parameters[] = new OA\Parameter($props);
@@ -1234,10 +1258,14 @@ class DtoSchemaBuilder
     }
 
     /**
-     * The schema of one query parameter: the property's type as a DTO schema maps it, or,
-     * for a union of several types, a `oneOf` of each member mapped the same way.
+     * The schema of one query parameter, the property's type as a DTO schema maps it,
+     * with the example the DTO declares (null when it declares none). For a single type
+     * that example is the one its DTO schema shows; a union is a `oneOf` of each member
+     * mapped the same way, with the example as declared, fitted to a string format.
+     *
+     * @return array{0: OA\Schema, 1: mixed}
      */
-    private function buildQueryParameterSchema(ReflectionProperty $property, object $meta): OA\Schema
+    private function buildQueryParameterSchema(ReflectionProperty $property, object $meta): array
     {
         $type = $property->getType();
         $members = [];
@@ -1253,7 +1281,11 @@ class DtoSchemaBuilder
         }
 
         if (count($members) < 2) {
-            return $this->toParameterSchema($this->buildProperty($meta));
+            $built = $this->buildProperty($meta);
+            // Read before toParameterSchema(), which clears the items' example.
+            $example = $meta->example === null ? null : $this->declaredExample($built, $meta);
+
+            return [$this->inputDateFormat($this->toParameterSchema($built), $meta), $example];
         }
 
         // PHP reports union members in its own fixed order; list scalars before arrays
@@ -1267,10 +1299,14 @@ class DtoSchemaBuilder
 
         $props = [
             'oneOf' => array_map(
-                fn (ReflectionNamedType $member): OA\Schema => $this->toParameterSchema(
-                    $this->buildProperty($this->extractPropertyMetadata($property, $member)),
-                    withDefault: false,
-                ),
+                function (ReflectionNamedType $member) use ($property): OA\Schema {
+                    $memberMeta = $this->extractPropertyMetadata($property, $member);
+
+                    return $this->inputDateFormat(
+                        $this->toParameterSchema($this->buildProperty($memberMeta), withDefault: false),
+                        $memberMeta,
+                    );
+                },
                 $members,
             ),
         ];
@@ -1283,7 +1319,57 @@ class DtoSchemaBuilder
             $props['nullable'] = true;
         }
 
-        return new OA\Schema($props);
+        $example = null;
+        if ($meta->example !== null) {
+            $example = $this->generateExample($meta);
+
+            if ($this->allowsString($property)) {
+                $example = $this->fitExample($example, $meta);
+            }
+        }
+
+        return [new OA\Schema($props), $example];
+    }
+
+    /**
+     * The example a property's DTO schema shows, for its query parameter: the
+     * property's own, or a one-item list of its items' (where a scalar example on an
+     * array sits); none where the schema shows none, as on a nested Data class. A
+     * DateTime property's schema shows #[Example] as written, so its Faker reference is
+     * resolved here, and fitted to a format its #[DateFormat] pins.
+     */
+    private function declaredExample(OA\Property $property, object $meta): mixed
+    {
+        if ($this->isDateTimeType($meta->typeName)) {
+            $example = $this->generateExample($meta);
+
+            return $meta->exactDateFormat ? $this->fitExample($example, $meta) : $example;
+        }
+
+        if ($property->example !== OpenApiGenerator::UNDEFINED) {
+            return $property->example;
+        }
+
+        if ($property->items instanceof OA\Items && $property->items->example !== OpenApiGenerator::UNDEFINED) {
+            return [$property->items->example];
+        }
+
+        return null;
+    }
+
+    /**
+     * A query parameter is only ever input, so a DateTime one is documented in the
+     * format its #[DateFormat] pins (`date` for `Y-m-d`), the form the request has to
+     * send, instead of the `date-time` a DTO schema gives the value it serializes to.
+     * #[Date] pins none: Laravel's `date` rule takes any date it can parse.
+     */
+    private function inputDateFormat(OA\Schema $schema, object $meta): OA\Schema
+    {
+        if ($meta->exactDateFormat && $meta->format !== null && $this->isDateTimeType($meta->typeName)) {
+            $schema->format = $meta->format;
+        }
+
+        return $schema;
     }
 
     /**

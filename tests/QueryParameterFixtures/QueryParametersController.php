@@ -49,6 +49,21 @@ class QueryParametersController
     {
     }
 
+    /** Takes a marked DTO whose examples and DateTime formats a DTO schema would not show as written. */
+    public function edgeCases(EdgeCasesRequest $request): void
+    {
+    }
+
+    /** Takes a marked DTO reading `filter` and `filter[search]`. */
+    public function overlapping(OverlappingFilterRequest $request): void
+    {
+    }
+
+    /** Takes a marked DTO with two properties of one input name. */
+    public function sameName(SameInputNameRequest $request): void
+    {
+    }
+
     /** Takes no Data class at all. */
     public function bare(): void
     {

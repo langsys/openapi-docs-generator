@@ -199,6 +199,27 @@ describe('parameters from a marked DTO', function () {
             ->and($parameter['schema'])->toBe(['type' => 'array', 'items' => ['type' => 'string']]);
     });
 
+    test('an example is the one the DTO schema shows: none on an object, an int on an int, an enum case', function () {
+        $operation = qpOperation('edgeCases');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect($parameters['meta'])->not->toHaveKey('example')
+            ->and($parameters['filter'])->not->toHaveKey('example')
+            ->and($parameters['limit']['example'])->toBeInt()
+            ->and($parameters['status']['example'])->toBeIn(['active', 'archived']);
+    });
+
+    test('a DateTime takes the format its #[DateFormat] pins, the form the request sends', function () {
+        $operation = qpOperation('edgeCases');
+        qpAttacher()->attach(qpDocument($operation));
+        $parameters = qpParameters($operation);
+
+        expect($parameters['until']['schema'])->toBe(['type' => 'string', 'format' => 'date', 'nullable' => true])
+            ->and($parameters['until']['example'])->toMatch('/^\d{4}-\d{2}-\d{2}$/')
+            ->and($parameters['since']['schema']['format'])->toBe('date-time');
+    });
+
     test('a nullable property\'s schema is nullable', function () {
         $operation = qpOperation('index');
         qpAttacher()->attach(qpDocument($operation));
@@ -365,6 +386,33 @@ describe('a parameter documented by hand as well', function () {
             OpenApiDocsException::class,
             "Query parameter 'search' of " . QueryParametersController::class . '@twice (GET /api/things) is read by both '
             . ListProjectsRequest::class . ' and ' . ProjectFiltersRequest::class . '; map one of them to another input name.',
+        );
+    });
+
+    test('fails when a hand-written one reads inside an object the DTO sends', function () {
+        $operation = qpOperation('filtered', [new OA\Parameter(['name' => 'filter[name]', 'in' => 'query'])]);
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation)))->toThrow(
+            OpenApiDocsException::class,
+            "Query parameter 'filter' of Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\QueryParametersController@filtered (GET /api/things), read by Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\ProjectFiltersRequest as an object sent as 'filter[…]', overlaps the hand-written 'filter[name]'; remove the hand-written one.",
+        );
+    });
+
+    test('fails when two properties of one DTO share an input name', function () {
+        $operation = qpOperation('sameName');
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation)))->toThrow(
+            OpenApiDocsException::class,
+            "Query parameter 'q' of Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\QueryParametersController@sameName (GET /api/things) is the input name of two properties of Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\SameInputNameRequest; map one of them to another input name.",
+        );
+    });
+
+    test('fails when one property reads inside an object another sends', function () {
+        $operation = qpOperation('overlapping');
+
+        expect(fn () => qpAttacher()->attach(qpDocument($operation)))->toThrow(
+            OpenApiDocsException::class,
+            "Query parameter 'filter[search]' of Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\QueryParametersController@overlapping (GET /api/things) reads inside 'filter', an object sent as 'filter[…]'; both are read by properties of Langsys\\OpenApiDocsGenerator\\Tests\\QueryParameterFixtures\\OverlappingFilterRequest; map one of them to another input name.",
         );
     });
 

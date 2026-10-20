@@ -31,7 +31,9 @@ use Psr\Log\LoggerInterface;
  *
  * A query parameter is never documented twice: one the operation already documents by
  * hand fails generation, and so does one two marked Data parameters (or two properties
- * of one) both read. So does a `$ref` whose component disagrees with the property.
+ * of one) both read, counting a name that reads inside an object another one sends
+ * (`filter[name]` and an object `filter`). So does a `$ref` whose component disagrees
+ * with the property.
  */
 class QueryParameterAttacher
 {
@@ -106,6 +108,8 @@ class QueryParameterAttacher
 
         $handWritten = $this->documentedQueryParameters($operation, $pathItem);
         $location = sprintf('%s@%s (%s %s)', $action->class, $action->getName(), strtoupper($method), $path);
+        /** @var array<string, bool> $read  name => whether it is an object, for the names DTOs added */
+        $read = [];
         /** @var array<string, class-string> $readBy  name => the Data class that added it */
         $readBy = [];
         $added = 0;
@@ -113,28 +117,54 @@ class QueryParameterAttacher
         foreach ($classes as $class) {
             foreach ($this->dtoSchemaBuilder->buildQueryParameters($class) as $parameter) {
                 $name = (string) $parameter->name;
+                $isObject = $this->isObject($parameter->schema);
 
-                if (isset($handWritten[$name])) {
-                    throw new OpenApiDocsException(sprintf(
-                        'Query parameter \'%s\' of %s is documented by hand and by %s; remove the hand-written one.',
-                        $name,
-                        $location,
-                        $class,
-                    ));
+                if (($other = $this->overlap($name, $isObject, $handWritten)) !== null) {
+                    throw new OpenApiDocsException($other === $name
+                        ? sprintf(
+                            'Query parameter \'%s\' of %s is documented by hand and by %s; remove the hand-written one.',
+                            $name,
+                            $location,
+                            $class,
+                        )
+                        : sprintf(
+                            'Query parameter \'%s\' of %s, read by %s as %s, overlaps the hand-written \'%s\'%s; remove the hand-written one.',
+                            $name,
+                            $location,
+                            $class,
+                            $isObject ? sprintf('an object sent as \'%s[…]\'', $name) : 'part of an object',
+                            $other,
+                            $isObject ? '' : sprintf(', an object sent as \'%s[…]\'', $other),
+                        ));
                 }
 
-                if (isset($readBy[$name])) {
-                    throw new OpenApiDocsException(sprintf(
-                        'Query parameter \'%s\' of %s is %s; map one of them to another input name.',
-                        $name,
-                        $location,
-                        $readBy[$name] === $class
-                            ? 'the input name of two properties of ' . $class
-                            : sprintf('read by both %s and %s', $readBy[$name], $class),
-                    ));
+                if (($other = $this->overlap($name, $isObject, $read)) !== null) {
+                    $readers = $readBy[$other] === $class
+                        ? 'properties of ' . $class
+                        : sprintf('%s and %s', $readBy[$other], $class);
+
+                    throw new OpenApiDocsException($other === $name
+                        ? sprintf(
+                            'Query parameter \'%s\' of %s is %s; map one of them to another input name.',
+                            $name,
+                            $location,
+                            $readBy[$other] === $class
+                                ? 'the input name of two properties of ' . $class
+                                : sprintf('read by both %s and %s', $readBy[$other], $class),
+                        )
+                        : sprintf(
+                            'Query parameter \'%s\' of %s %s; both are read by %s; map one of them to another input name.',
+                            $name,
+                            $location,
+                            $isObject
+                                ? sprintf('is an object sent as \'%s[…]\', which \'%s\' reads inside', $name, $other)
+                                : sprintf('reads inside \'%s\', an object sent as \'%s[…]\'', $other, $other),
+                            $readers,
+                        ));
                 }
 
                 $this->assertComponentAgrees($parameter, $class, $location);
+                $read[$name] = $isObject;
                 $readBy[$name] = $class;
 
                 if ($operation->parameters === Generator::UNDEFINED) {
@@ -210,13 +240,45 @@ class QueryParameterAttacher
 
         $parameter->name = $this->wireName($parameter);
 
-        // A nested Data class is an `allOf` over its component schema.
-        if ($parameter->schema->type === 'object' || $parameter->schema->allOf !== Generator::UNDEFINED) {
+        if ($this->isObject($parameter->schema)) {
             $parameter->style = 'deepObject';
             $parameter->explode = true;
         }
 
         return $parameter;
+    }
+
+    /**
+     * Whether a parameter's schema is an object, sent as `name[key]=…`: a string map, or
+     * a nested Data class, which is an `allOf` over its component schema.
+     */
+    private function isObject(mixed $schema): bool
+    {
+        return $schema instanceof OA\Schema
+            && ($schema->type === 'object' || $schema->allOf !== Generator::UNDEFINED);
+    }
+
+    /**
+     * The name among $names that reads the same input as $name: $name itself, or one
+     * that reads inside it (`filter[name]` inside an object `filter`), or that it reads
+     * inside; null when there is none.
+     *
+     * @param  array<string, bool>  $names  name => whether it is an object
+     */
+    private function overlap(string $name, bool $isObject, array $names): ?string
+    {
+        if (isset($names[$name])) {
+            return $name;
+        }
+
+        foreach ($names as $other => $otherIsObject) {
+            if (($isObject && str_starts_with($other, $name . '['))
+                || ($otherIsObject && str_starts_with($name, $other . '['))) {
+                return $other;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -233,9 +295,9 @@ class QueryParameterAttacher
     /**
      * Names of the query parameters the operation and its path item already document,
      * inline or by `$ref` to a component, with any `[]` suffix removed so `ids` and
-     * `ids[]` count as one parameter.
+     * `ids[]` count as one parameter, each with whether it is an object (a `deepObject`).
      *
-     * @return array<string, true>
+     * @return array<string, bool>
      */
     private function documentedQueryParameters(OA\Operation $operation, OA\PathItem $pathItem): array
     {
@@ -256,7 +318,8 @@ class QueryParameterAttacher
                 }
 
                 if ($parameter->in === 'query' && is_string($parameter->name)) {
-                    $names[$this->baseName($parameter->name)] = true;
+                    $names[$this->baseName($parameter->name)] = $parameter->style === 'deepObject'
+                        || $this->isObject($parameter->schema);
                 }
             }
         }
