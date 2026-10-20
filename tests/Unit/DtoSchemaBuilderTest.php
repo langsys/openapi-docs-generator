@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Str;
 use Langsys\OpenApiDocsGenerator\Functions\CustomFunctions;
+use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use OpenApi\Annotations as OA;
@@ -422,6 +423,58 @@ test('an array #[Example] is an object\'s example, and a list\'s, whose items ta
         ->and($props['tags']['items'])->toBe(['type' => 'string'])
         ->and($props['ranges']['items'])->toBe(['type' => 'string', 'example' => '203.0.113.0/24'])
         ->and($props['ranges'])->not->toHaveKey('example');
+});
+
+/**
+ * Build a Data class with one promoted property, written into a temp dir, so an invalid
+ * one never reaches the shared fixtures.
+ */
+function buildArrayExampleFixture(string $class, string $property): void
+{
+    $dir = sys_get_temp_dir() . '/openapi-array-example-' . uniqid();
+    mkdir($dir);
+    file_put_contents($dir . "/{$class}.php", <<<PHP
+<?php
+namespace ArrayExampleFixture;
+use Langsys\\OpenApiDocsGenerator\\Generators\\Attributes\\Example;
+use Spatie\\LaravelData\\Data;
+class {$class} extends Data
+{
+    public function __construct(
+        {$property},
+    ) {}
+}
+PHP);
+    require_once $dir . "/{$class}.php";
+
+    try {
+        (new DtoSchemaBuilder($dir, new ExampleGenerator([], []), []))->buildAll();
+    } finally {
+        array_map('unlink', glob($dir . '/*'));
+        rmdir($dir);
+    }
+}
+
+describe('an array #[Example] that does not fit the property fails generation', function () {
+    test('on a property that is not a plain array', function () {
+        expect(fn () => buildArrayExampleFixture('ScalarArrayExample', "#[Example(['a', 'b'])] public string \$name"))
+            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\ScalarArrayExample::$name is an array, which only a plain array property takes');
+    });
+
+    test('with keys, on a list', function () {
+        expect(fn () => buildArrayExampleFixture('KeyedListExample', "#[Example(['a' => 1])] public array \$options"))
+            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\KeyedListExample::$options has keys, but the property is documented as a list');
+    });
+
+    test('as a list, on a string map', function () {
+        expect(fn () => buildArrayExampleFixture('ListMapExample', "/** @var array<string, mixed> */ #[Example(['a', 'b'])] public array \$device_info"))
+            ->toThrow(OpenApiDocsException::class, '#[Example] on ArrayExampleFixture\\ListMapExample::$device_info is a list, but the property is a string map');
+    });
+
+    test('but an empty one fits a string map', function () {
+        expect(fn () => buildArrayExampleFixture('EmptyMapExample', "/** @var array<string, mixed> */ #[Example([])] public array \$device_info"))
+            ->not->toThrow(OpenApiDocsException::class);
+    });
 });
 
 // -------------------------------------------------------------------------

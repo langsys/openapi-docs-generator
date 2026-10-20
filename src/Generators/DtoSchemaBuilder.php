@@ -391,6 +391,10 @@ class DtoSchemaBuilder
             $collectionOf = $this->resolveCollectionOfFromDocBlock($property);
         }
 
+        if ($memberType === null && is_array($attributes->example)) {
+            $this->assertArrayExampleFits($property, $typeName, $collectionOf, $attributes);
+        }
+
         $hasDefault = $defaultValue !== null || $this->propertyHasDefault($property);
         // The declared type, not the member a union resolves to: `string|array|null` allows null.
         $nullable = ($memberType ?? $property->getType())->allowsNull();
@@ -416,6 +420,47 @@ class DtoSchemaBuilder
             'nullable' => $nullable,
             'required' => !$nullable && !$this->propertyDeclaresLaravelDataOptional($property) && !$hasDefault,
         ];
+    }
+
+    /**
+     * An array #[Example] is the example of a plain array (or of a union resolved to
+     * one), so it must have that array's shape: keys for a string map (`@var
+     * array<string, T>`, an object), none for a list. Anywhere else it would contradict
+     * the schema, so generation fails instead.
+     *
+     * @throws OpenApiDocsException
+     */
+    private function assertArrayExampleFits(ReflectionProperty $property, string $typeName, ?string $collectionOf, object $attributes): void
+    {
+        $example = $attributes->example;
+        $where = sprintf('#[Example] on %s::$%s', $property->getDeclaringClass()->getName(), $property->getName());
+
+        if ($typeName !== 'array' || $collectionOf !== null || $attributes->oneOfItemsFrom !== null) {
+            throw new OpenApiDocsException(sprintf(
+                '%s is an array, which only a plain array property takes (a list, or a string map declared `@var array<string, T>`); give it a scalar example.',
+                $where,
+            ));
+        }
+
+        if ($example === [] || $attributes->groupedCollection !== null) {
+            return;
+        }
+
+        $isMap = $this->resolveStringMapValueFromDocBlock($property->getDocComment() ?: null) !== null;
+
+        if ($isMap && array_is_list($example)) {
+            throw new OpenApiDocsException(sprintf(
+                '%s is a list, but the property is a string map (`@var array<string, T>`), documented as an object; give the example keys.',
+                $where,
+            ));
+        }
+
+        if (! $isMap && ! array_is_list($example)) {
+            throw new OpenApiDocsException(sprintf(
+                '%s has keys, but the property is documented as a list; declare it `@var array<string, T>` to document an object.',
+                $where,
+            ));
+        }
     }
 
     /**

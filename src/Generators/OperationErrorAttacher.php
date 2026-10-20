@@ -270,9 +270,9 @@ class OperationErrorAttacher
     /**
      * An example error object for one error, taken from the examples its `{Name}Body`
      * schema already advertises: the filled message, the code, the template, its params
-     * and its typed details. A property with no example of its own is left out rather
-     * than invented, so an app-owned envelope field (a validation `errors` map, say)
-     * never appears with made-up content.
+     * and its typed details. A property with no example of its own (a free-form object
+     * such as a validation `errors` map) is left out rather than invented, so the example
+     * shows only what the schemas advertise.
      *
      * @return array<string, mixed>
      */
