@@ -897,9 +897,10 @@ class DtoSchemaBuilder
 
     /**
      * A DateTime property's #[Example]: a literal as written, a `:faker` reference
-     * resolved, and replaced by a Faker date-time when what it makes isn't one (`:date`
-     * makes a date only), since the schema documents the `date-time` the value
-     * serializes to, whatever format a validation attribute pins its input to.
+     * resolved, and replaced by a Faker date-time when what it makes isn't one (Faker's
+     * `:date` makes `Y-m-d`, the default custom `date` `Y-m-d H:i:s`), since the schema
+     * documents the `date-time` the value serializes to, whatever format a validation
+     * attribute pins its input to.
      */
     private function dateTimeExample(object $meta): mixed
     {
@@ -1350,12 +1351,13 @@ class DtoSchemaBuilder
      * The example a property's DTO schema shows, for its query parameter: the
      * property's own, or a one-item list of its items' (where a scalar example on an
      * array sits); none where the schema shows none, as on a nested Data class. A
-     * DateTime parameter under #[DateFormat] is documented in that format instead of
-     * its schema's `date-time` (inputDateFormat()), so its example is made for it.
+     * DateTime parameter whose #[DateFormat] maps to a format is documented in it
+     * instead of its schema's `date-time` (inputDateFormat()), so its example is made
+     * for it.
      */
     private function declaredExample(OA\Property $property, object $meta): mixed
     {
-        if ($meta->exactDateFormat && $this->isDateTimeType($meta->typeName)) {
+        if ($meta->exactDateFormat && $meta->format !== null && $this->isDateTimeType($meta->typeName)) {
             return $this->fitExample($this->generateExample($meta), $meta);
         }
 

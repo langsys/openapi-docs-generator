@@ -220,17 +220,19 @@ describe('parameters from a marked DTO', function () {
             ->and($parameters['since']['schema']['format'])->toBe('date-time');
     });
 
-    test('a DateTime without #[DateFormat] shows the date-time its DTO schema shows for an #[Example(\':faker\')]', function () {
+    test('a DateTime documented as date-time shows a date-time, as its DTO schema does, for an #[Example(\':faker\')]', function (string $name) {
         $operation = qpOperation('edgeCases');
         qpAttacher()->attach(qpDocument($operation));
-        $after = qpParameters($operation)['after'];
+        $parameter = qpParameters($operation)[$name];
 
-        // `:date` makes a date only, which doesn't fit the documented date-time.
-        $date = DateTime::createFromFormat('!' . DATE_ATOM, $after['example']);
-        expect($after['schema']['format'])->toBe('date-time')
+        $date = DateTime::createFromFormat('!' . DATE_ATOM, $parameter['example']);
+        expect($parameter['schema']['format'])->toBe('date-time')
             ->and($date)->not->toBeFalse()
-            ->and($date->format(DATE_ATOM))->toBe($after['example']);
-    });
+            ->and($date->format(DATE_ATOM))->toBe($parameter['example']);
+    })->with([
+        'without #[DateFormat], `:date` making a date' => ['after'],
+        'under a #[DateFormat] that maps to no format, `:dateTime` making an object' => ['at'],
+    ]);
 
     test('a nullable property\'s schema is nullable', function () {
         $operation = qpOperation('index');

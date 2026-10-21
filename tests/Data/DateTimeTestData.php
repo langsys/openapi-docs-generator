@@ -20,5 +20,9 @@ class DateTimeTestData extends Data
         public Carbon $with_example,
         #[Example(':date')]
         public Carbon $reminds_on,
+        #[Example(':dateTime')]
+        public Carbon $ends_on,
+        #[Example(':fixed_stamp')]
+        public Carbon $stamped_on,
     ) {}
 }

@@ -462,9 +462,9 @@ Produces:
 }
 ```
 
-A literal `#[Example]` is used as written. A [Faker reference](#invoking-faker-directly-from-example) such as `#[Example(':date')]` is resolved, and when what it makes isn't a date-time (`:date` makes a date only), Faker makes one that is, since the schema documents the date-time the value serializes to.
-
 Without this, `Carbon` and `DateTime` would be treated as nested objects with a `$ref` — which is incorrect since Laravel Data serializes them as ISO 8601 strings.
+
+A literal `#[Example]` is used as written. A [Faker reference](#invoking-faker-directly-from-example) such as `#[Example(':date')]` is resolved, and when what it makes isn't an ISO 8601 date-time (`:date` makes a `Y-m-d` date, or a `Y-m-d H:i:s` one with the default custom functions), Faker makes one that is, since the schema documents the date-time the value serializes to.
 
 ### Formats from Validation Attributes
 

@@ -329,15 +329,44 @@ test('DateTime property with explicit Example uses that value', function () {
     expect($withExample->example)->toBe('2025-06-01T00:00:00+00:00');
 });
 
-test('a DateTime property\'s #[Example(\':faker\')] is resolved to a date-time', function () {
-    $schemas = $this->builder->buildAll();
-    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
-    $example = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'reminds_on')->example;
+test('a DateTime property\'s #[Example(\':faker\')] is resolved to a date-time', function (string $property, array $customFunctions) {
+    $builder = new DtoSchemaBuilder(
+        dtoPaths: dirname(__DIR__, 2) . '/tests/Data',
+        exampleGenerator: new ExampleGenerator(fakerAttributeMapper: [], customFunctions: $customFunctions),
+        paginationFields: [],
+    );
+    $schema = collect($builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+    $example = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === $property)->example;
 
-    // `:date` makes a date only; the schema documents the date-time the value serializes to.
+    // The schema documents the date-time the value serializes to, whatever the reference makes.
     $date = DateTime::createFromFormat('!' . DATE_ATOM, $example);
     expect($date)->not->toBeFalse()
         ->and($date->format(DATE_ATOM))->toBe($example);
+})->with([
+    '`:date`, a Y-m-d date' => ['reminds_on', []],
+    '`:date` under the default custom `date`, a Y-m-d H:i:s one' => ['reminds_on', ['date' => [CustomFunctions::class, 'date']]],
+    '`:dateTime`, an object' => ['ends_on', []],
+]);
+
+test('a DateTime property\'s #[Example(\':faker\')] that makes a date-time keeps it', function () {
+    app()->instance('fixed-stamp-functions', new class {
+        public function fixed_stamp(): string
+        {
+            return '2030-01-02T03:04:05+00:00';
+        }
+    });
+    $builder = new DtoSchemaBuilder(
+        dtoPaths: dirname(__DIR__, 2) . '/tests/Data',
+        exampleGenerator: new ExampleGenerator(
+            fakerAttributeMapper: [],
+            customFunctions: ['fixed_stamp' => ['fixed-stamp-functions', 'fixed_stamp']],
+        ),
+        paginationFields: [],
+    );
+    $schema = collect($builder->buildAll())->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+
+    expect(collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'stamped_on')->example)
+        ->toBe('2030-01-02T03:04:05+00:00');
 });
 
 test('v3: DataCollection with DataCollectionOf still works (backward compat)', function () {
