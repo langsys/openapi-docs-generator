@@ -6,6 +6,7 @@ use OpenApi\Annotations as OA;
 use OpenApi\Generator as OpenApiGen;
 use Langsys\OpenApiDocsGenerator\Contracts\EndpointParameterResolver;
 use Langsys\OpenApiDocsGenerator\Data\EndpointParameterData;
+use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 
 class EndpointParameterEnricher
 {
@@ -20,6 +21,11 @@ class EndpointParameterEnricher
      */
     private const RESPONSE_SUFFIXES = ['PaginatedResponse', 'ListResponse', 'Response'];
 
+    private const SCHEMA_REF_PREFIX = '#/components/schemas/';
+
+    /** Set per enrich() pass: `components.schemas` by name. */
+    private array $schemas = [];
+
     public function __construct(
         private EndpointParameterResolver $resolver,
         private array $parameterNames = ['order_by', 'filter_by'],
@@ -29,6 +35,9 @@ class EndpointParameterEnricher
     /**
      * Enrich the OpenAPI document by replacing generic parameter refs
      * with endpoint-specific inline parameters for order_by/filter_by.
+     *
+     * @throws OpenApiDocsException when an enriched operation's orderable or filterable
+     *                               fields name a property its resource schema lacks.
      */
     public function enrich(OA\OpenApi $openapi): void
     {
@@ -36,16 +45,30 @@ class EndpointParameterEnricher
             return;
         }
 
+        $this->schemas = $this->indexSchemas($openapi);
+        $unknownFields = [];
+
         foreach ($openapi->paths as $pathItem) {
-            $this->enrichPathItem($pathItem);
+            array_push($unknownFields, ...$this->enrichPathItem($pathItem));
+        }
+
+        if ($unknownFields !== []) {
+            throw new OpenApiDocsException(
+                "The orderable or filterable fields of these operations are not properties of the resource they list; correct the fields or the resource:\n- "
+                . implode("\n- ", $unknownFields)
+            );
         }
     }
 
     /**
      * Process all operations within a single path item.
+     *
+     * @return string[]  One line per operation whose fields its resource lacks.
      */
-    private function enrichPathItem(OA\PathItem $pathItem): void
+    private function enrichPathItem(OA\PathItem $pathItem): array
     {
+        $unknownFields = [];
+
         foreach (self::OPERATION_METHODS as $method) {
             $operation = $pathItem->{$method};
 
@@ -57,40 +80,78 @@ class EndpointParameterEnricher
                 continue;
             }
 
-            $this->enrichOperation($operation, $pathItem->path);
+            $line = $this->enrichOperation($operation, $pathItem->path, $method);
+
+            if ($line !== null) {
+                $unknownFields[] = $line;
+            }
         }
+
+        return $unknownFields;
     }
 
     /**
      * Enrich a single operation's parameters.
+     *
+     * @return string|null  The fields its resource schema lacks, when it was enriched.
      */
-    private function enrichOperation(OA\Operation $operation, string $path): void
+    private function enrichOperation(OA\Operation $operation, string $path, string $method): ?string
     {
-        $resourceName = $this->inferResourceName($operation);
+        $schemaName = $this->inferSchemaName($operation);
 
-        if ($resourceName === null) {
-            return;
+        if ($schemaName === null) {
+            return null;
         }
 
         $endpointPath = ltrim($path, '/');
-        $data = $this->resolver->resolve($endpointPath, $resourceName);
+        $data = $this->resolver->resolve($endpointPath, $schemaName . 'Resource');
 
         if ($data === null) {
-            return;
+            return null;
         }
 
-        $operation->parameters = $this->replaceRefParameters($operation->parameters, $data);
+        $properties = isset($this->schemas[$schemaName]) ? $this->propertiesOf($this->schemas[$schemaName]) : null;
+        [$parameters, $enriched] = $this->replaceRefParameters($operation->parameters, $data, $properties);
+        $operation->parameters = $parameters;
+
+        if (! $enriched || $properties === null) {
+            return null;
+        }
+
+        return $this->unknownFields($data, $properties, sprintf('%s %s, %s', strtoupper($method), $path, $schemaName));
     }
 
     /**
-     * Infer the resource name from the operation's 200 response $ref.
+     * The orderable and filterable fields the resource schema has no property for, as
+     * one line after $label, or null when it has them all.
+     *
+     * @param  array<string, OA\Property>  $properties
+     */
+    private function unknownFields(EndpointParameterData $data, array $properties, string $label): ?string
+    {
+        $missing = [];
+
+        foreach (['orderable' => $data->orderableFields, 'filterable' => $data->filterableFields] as $kind => $fields) {
+            $unknown = array_values(array_diff($fields, array_map('strval', array_keys($properties))));
+
+            if (! empty($unknown)) {
+                $missing[] = sprintf('%s `%s`', $kind, implode('`, `', $unknown));
+            }
+        }
+
+        return empty($missing) ? null : $label . ': ' . implode('; ', $missing);
+    }
+
+    /**
+     * Infer the resource's schema name from the operation's 200 response $ref.
      *
      * Looks for a JsonContent or MediaType schema ref in the 200 response,
-     * extracts the schema name, strips response suffixes, and appends "Resource".
+     * extracts the schema name and strips response suffixes. The resolver is asked
+     * for that name plus "Resource", the class the schema was built from.
      *
-     * Example: "#/components/schemas/ProjectPaginatedResponse" -> "ProjectResource"
+     * Example: "#/components/schemas/ProjectPaginatedResponse" -> "Project"
      */
-    private function inferResourceName(OA\Operation $operation): ?string
+    private function inferSchemaName(OA\Operation $operation): ?string
     {
         $response200 = $this->find200Response($operation);
 
@@ -119,8 +180,7 @@ class EndpointParameterEnricher
             }
         }
 
-        // Append "Resource" to form the canonical resource name
-        return $baseName . 'Resource';
+        return $baseName;
     }
 
     /**
@@ -214,12 +274,17 @@ class EndpointParameterEnricher
      * Replace $ref parameters that match configured parameter names
      * with inline, endpoint-specific parameter definitions.
      *
+     * A list with no filterable fields can't filter (and has no default filters,
+     * which are set on filterable fields), so its filter_by is left out.
+     *
      * @param  OA\Parameter[]  $parameters
-     * @return OA\Parameter[]
+     * @param  array<string, OA\Property>|null  $properties  The resource schema's, null when unknown.
+     * @return array{0: OA\Parameter[], 1: bool}  The parameters, and whether any was replaced or left out.
      */
-    private function replaceRefParameters(array $parameters, EndpointParameterData $data): array
+    private function replaceRefParameters(array $parameters, EndpointParameterData $data, ?array $properties): array
     {
         $result = [];
+        $enriched = false;
 
         foreach ($parameters as $parameter) {
             if (! $parameter instanceof OA\Parameter) {
@@ -236,9 +301,15 @@ class EndpointParameterEnricher
             $refName = basename($parameter->ref);
 
             if (in_array($refName, $this->parameterNames, true)) {
-                $inlineParam = $this->buildInlineParameter($refName, $data);
+                if ($refName === 'filter_by' && empty($data->filterableFields)) {
+                    $enriched = true;
+                    continue;
+                }
+
+                $inlineParam = $this->buildInlineParameter($refName, $data, $properties);
                 if ($inlineParam !== null) {
                     $result[] = $inlineParam;
+                    $enriched = true;
                     continue;
                 }
             }
@@ -247,20 +318,22 @@ class EndpointParameterEnricher
             $result[] = $parameter;
         }
 
-        return $result;
+        return [$result, $enriched];
     }
 
     /**
      * Build an inline parameter to replace a generic $ref parameter.
+     *
+     * @param  array<string, OA\Property>|null  $properties
      */
-    private function buildInlineParameter(string $parameterName, EndpointParameterData $data): ?OA\Parameter
+    private function buildInlineParameter(string $parameterName, EndpointParameterData $data, ?array $properties): ?OA\Parameter
     {
         if ($parameterName === 'order_by') {
             return $this->buildOrderByParameter($data);
         }
 
         if ($parameterName === 'filter_by') {
-            return $this->buildFilterByParameter($data);
+            return $this->buildFilterByParameter($data, $properties);
         }
 
         return null;
@@ -307,15 +380,17 @@ class EndpointParameterEnricher
 
     /**
      * Build an inline filter_by parameter with endpoint-specific details.
+     *
+     * @param  array<string, OA\Property>|null  $properties
      */
-    private function buildFilterByParameter(EndpointParameterData $data): OA\Parameter
+    private function buildFilterByParameter(EndpointParameterData $data, ?array $properties): OA\Parameter
     {
         $description = $this->buildFilterByDescription(
             $data->filterableFields,
             $data->defaultFilters,
             $data->fieldTypes,
         );
-        $example = $this->buildFilterByExample($data->defaultFilters, $data->filterableFields);
+        $example = $this->buildFilterByExample($data->defaultFilters, $data->filterableFields, $properties);
 
         $properties = [
             'parameter' => 'filter_by',
@@ -452,18 +527,112 @@ class EndpointParameterEnricher
     }
 
     /**
-     * Build an example value for the filter_by parameter.
+     * Build an example value for the filter_by parameter: the first default filter, else
+     * the first filterable field the resource schema shows a value for.
+     *
+     * @param  array<string>  $filterableFields  Never empty: a list without any has no filter_by.
+     * @param  array<string, OA\Property>|null  $properties
      */
-    private function buildFilterByExample(array $defaultFilters, array $filterableFields): string
+    private function buildFilterByExample(array $defaultFilters, array $filterableFields, ?array $properties): string
     {
         if (! empty($defaultFilters)) {
             return "{$defaultFilters[0][0]}:{$defaultFilters[0][1]}";
         }
 
-        if (! empty($filterableFields)) {
-            return "{$filterableFields[0]}:value";
+        foreach ($filterableFields as $field) {
+            $value = isset($properties[$field]) ? $this->filterValue($properties[$field]) : null;
+
+            if ($value !== null) {
+                return "{$field}:{$value}";
+            }
         }
 
-        return 'field:value';
+        return "{$filterableFields[0]}:value";
+    }
+
+    /**
+     * A property's value as a filter writes it: its scalar example, or the first case of
+     * the enum schema it refers to (directly, or as a nullable `allOf`); booleans as
+     * `true`/`false`. Null when it shows neither.
+     */
+    private function filterValue(OA\Schema $property): ?string
+    {
+        $value = $property->example;
+
+        if ($value === OpenApiGen::UNDEFINED || ! is_scalar($value) || $value === '') {
+            $enum = $this->referencedSchema($property)?->enum;
+            $value = is_array($enum) && ! empty($enum) ? reset($enum) : null;
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        return is_scalar($value) && $value !== '' ? (string) $value : null;
+    }
+
+    /**
+     * The component schema a property refers to, by `$ref` or a one-member `allOf`.
+     */
+    private function referencedSchema(OA\Schema $property): ?OA\Schema
+    {
+        $ref = $property->ref;
+
+        if ($ref === OpenApiGen::UNDEFINED && is_array($property->allOf) && count($property->allOf) === 1) {
+            $ref = $property->allOf[array_key_first($property->allOf)]->ref;
+        }
+
+        if ($ref === OpenApiGen::UNDEFINED || ! is_string($ref) || ! str_starts_with($ref, self::SCHEMA_REF_PREFIX)) {
+            return null;
+        }
+
+        return $this->schemas[substr($ref, strlen(self::SCHEMA_REF_PREFIX))] ?? null;
+    }
+
+    /**
+     * A schema's properties by name, or null when it declares none of its own (an
+     * `allOf` composition, say), so nothing can be said about its fields.
+     *
+     * @return array<string, OA\Property>|null
+     */
+    private function propertiesOf(OA\Schema $schema): ?array
+    {
+        if ($schema->properties === OpenApiGen::UNDEFINED || ! is_array($schema->properties)) {
+            return null;
+        }
+
+        $properties = [];
+
+        foreach ($schema->properties as $property) {
+            if ($property instanceof OA\Property && $property->property !== OpenApiGen::UNDEFINED) {
+                $properties[(string) $property->property] = $property;
+            }
+        }
+
+        return $properties;
+    }
+
+    /**
+     * `components.schemas` by name.
+     *
+     * @return array<string, OA\Schema>
+     */
+    private function indexSchemas(OA\OpenApi $openapi): array
+    {
+        if ($openapi->components === OpenApiGen::UNDEFINED
+            || $openapi->components->schemas === OpenApiGen::UNDEFINED
+            || ! is_array($openapi->components->schemas)) {
+            return [];
+        }
+
+        $schemas = [];
+
+        foreach ($openapi->components->schemas as $schema) {
+            if ($schema instanceof OA\Schema && $schema->schema !== OpenApiGen::UNDEFINED) {
+                $schemas[(string) $schema->schema] = $schema;
+            }
+        }
+
+        return $schemas;
     }
 }

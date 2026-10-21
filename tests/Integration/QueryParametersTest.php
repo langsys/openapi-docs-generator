@@ -1,11 +1,13 @@
 <?php
 
+use Langsys\OpenApiDocsGenerator\Exceptions\OpenApiDocsException;
 use Langsys\OpenApiDocsGenerator\Generators\DtoSchemaBuilder;
 use Langsys\OpenApiDocsGenerator\Generators\ExampleGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\GeneratorFactory;
 use Langsys\OpenApiDocsGenerator\Generators\OpenApiGenerator;
 use Langsys\OpenApiDocsGenerator\Generators\QueryParameterAttacher;
 use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\FixedEndpointParameterResolver;
+use Langsys\OpenApiDocsGenerator\Tests\QueryParameterFixtures\UnknownFieldEndpointParameterResolver;
 use Psr\Log\NullLogger;
 
 beforeEach(function () {
@@ -106,6 +108,16 @@ test('endpoint enrichment still replaces the order_by and filter_by refs it adds
 
     expect(queryParameterNames($doc['paths']['/api/projects']['get'])[0])->toBe('#/components/parameters/page')
         ->and($parameters[2]['name'])->toBe('order_by')
-        ->and($parameters[2]['description'])->toContain('created_at')
-        ->and($parameters[3]['name'])->toBe('filter_by');
+        ->and($parameters[2]['description'])->toContain('**Orderable fields:** `name`')
+        ->and($parameters[3]['name'])->toBe('filter_by')
+        // From ProjectResource's #[Example('Acme')], read off the Project schema built from it.
+        ->and($parameters[3]['example'])->toBe('name:Acme');
+});
+
+test('endpoint enrichment fails generation when a list names a field its resource lacks', function () {
+    expect(fn () => generateWithQueryParameters($this->docsFile, [
+        'enabled' => true,
+        'resolver' => UnknownFieldEndpointParameterResolver::class,
+    ]))->toThrow(OpenApiDocsException::class, '- GET /api/projects, Project: orderable `created_at`')
+        ->and(file_exists($this->docsFile))->toBeFalse();
 });
