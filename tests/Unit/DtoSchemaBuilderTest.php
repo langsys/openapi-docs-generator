@@ -329,6 +329,17 @@ test('DateTime property with explicit Example uses that value', function () {
     expect($withExample->example)->toBe('2025-06-01T00:00:00+00:00');
 });
 
+test('a DateTime property\'s #[Example(\':faker\')] is resolved to a date-time', function () {
+    $schemas = $this->builder->buildAll();
+    $schema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'DateTimeTestData');
+    $example = collect($schema->properties)->first(fn (OA\Property $p) => $p->property === 'reminds_on')->example;
+
+    // `:date` makes a date only; the schema documents the date-time the value serializes to.
+    $date = DateTime::createFromFormat('!' . DATE_ATOM, $example);
+    expect($date)->not->toBeFalse()
+        ->and($date->format(DATE_ATOM))->toBe($example);
+});
+
 test('v3: DataCollection with DataCollectionOf still works (backward compat)', function () {
     $schemas = $this->builder->buildAll();
     $testSchema = collect($schemas)->first(fn (OA\Schema $s) => $s->schema === 'TestData');

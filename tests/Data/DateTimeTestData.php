@@ -18,5 +18,7 @@ class DateTimeTestData extends Data
         public DateTime $legacy_date,
         #[Example('2025-06-01T00:00:00+00:00')]
         public Carbon $with_example,
+        #[Example(':date')]
+        public Carbon $reminds_on,
     ) {}
 }

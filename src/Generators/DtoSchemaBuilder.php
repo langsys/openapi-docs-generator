@@ -875,7 +875,7 @@ class DtoSchemaBuilder
      */
     private function buildDateTimeProperty(object $meta): OA\Property
     {
-        $example = $meta->example ?? '2024-01-15T10:30:00+00:00';
+        $example = $meta->example === null ? '2024-01-15T10:30:00+00:00' : $this->dateTimeExample($meta);
 
         $props = [
             'property' => $meta->name,
@@ -893,6 +893,21 @@ class DtoSchemaBuilder
         }
 
         return new OA\Property($props);
+    }
+
+    /**
+     * A DateTime property's #[Example]: a literal as written, a `:faker` reference
+     * resolved, and replaced by a Faker date-time when what it makes isn't one (`:date`
+     * makes a date only), since the schema documents the `date-time` the value
+     * serializes to, whatever format a validation attribute pins its input to.
+     */
+    private function dateTimeExample(object $meta): mixed
+    {
+        return $this->fitExample($this->generateExample($meta), (object) [
+            ...(array) $meta,
+            'format' => 'date-time',
+            'dateFormats' => [DATE_ATOM, DATE_RFC3339_EXTENDED],
+        ]);
     }
 
     /**
@@ -1335,15 +1350,13 @@ class DtoSchemaBuilder
      * The example a property's DTO schema shows, for its query parameter: the
      * property's own, or a one-item list of its items' (where a scalar example on an
      * array sits); none where the schema shows none, as on a nested Data class. A
-     * DateTime property's schema shows #[Example] as written, so its Faker reference is
-     * resolved here, and fitted to a format its #[DateFormat] pins.
+     * DateTime parameter under #[DateFormat] is documented in that format instead of
+     * its schema's `date-time` (inputDateFormat()), so its example is made for it.
      */
     private function declaredExample(OA\Property $property, object $meta): mixed
     {
-        if ($this->isDateTimeType($meta->typeName)) {
-            $example = $this->generateExample($meta);
-
-            return $meta->exactDateFormat ? $this->fitExample($example, $meta) : $example;
+        if ($meta->exactDateFormat && $this->isDateTimeType($meta->typeName)) {
+            return $this->fitExample($this->generateExample($meta), $meta);
         }
 
         if ($property->example !== OpenApiGenerator::UNDEFINED) {

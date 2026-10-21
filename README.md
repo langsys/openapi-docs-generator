@@ -457,10 +457,12 @@ Produces:
 ```json
 {
   "starts_at": { "type": "string", "format": "date-time", "example": "2024-01-15T10:30:00+00:00" },
-  "cancelled_at": { "type": "string", "format": "date-time", "nullable": true },
+  "cancelled_at": { "type": "string", "format": "date-time", "example": "2024-01-15T10:30:00+00:00", "nullable": true },
   "deadline": { "type": "string", "format": "date-time", "example": "2025-12-31T23:59:59+00:00" }
 }
 ```
+
+A literal `#[Example]` is used as written. A [Faker reference](#invoking-faker-directly-from-example) such as `#[Example(':date')]` is resolved, and when what it makes isn't a date-time (`:date` makes a date only), Faker makes one that is, since the schema documents the date-time the value serializes to.
 
 Without this, `Carbon` and `DateTime` would be treated as nested objects with a `$ref` — which is incorrect since Laravel Data serializes them as ISO 8601 strings.
 

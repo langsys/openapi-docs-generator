@@ -12,7 +12,8 @@ use Spatie\LaravelData\Data;
 /**
  * Examples a DTO schema does not show as written (a scalar on a string map and on a
  * nested Data class, a string on an int, a value that is not an enum case), and
- * DateTime properties under #[DateFormat] and #[Date].
+ * DateTime properties under #[DateFormat] and #[Date], and with a `:faker` example
+ * that makes a date only.
  */
 #[QueryParameters]
 class EdgeCasesRequest extends Data
@@ -31,6 +32,8 @@ class EdgeCasesRequest extends Data
         public ?Carbon $until = null,
         #[Date]
         public ?Carbon $since = null,
+        #[Example(':date')]
+        public ?Carbon $after = null,
     ) {
     }
 }
