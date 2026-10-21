@@ -104,7 +104,8 @@ class EndpointParameterEnricher
         }
 
         $endpointPath = ltrim($path, '/');
-        $data = $this->resolver->resolve($endpointPath, $schemaName . 'Resource');
+        $resourceName = $schemaName . 'Resource';
+        $data = $this->resolver->resolve($endpointPath, $resourceName);
 
         if ($data === null) {
             return null;
@@ -118,7 +119,7 @@ class EndpointParameterEnricher
             return null;
         }
 
-        return $this->unknownFields($data, $properties, sprintf('%s %s, %s', strtoupper($method), $path, $schemaName));
+        return $this->unknownFields($data, $properties, sprintf('%s %s, %s', strtoupper($method), $path, $resourceName));
     }
 
     /**
@@ -146,8 +147,8 @@ class EndpointParameterEnricher
      * Infer the resource's schema name from the operation's 200 response $ref.
      *
      * Looks for a JsonContent or MediaType schema ref in the 200 response,
-     * extracts the schema name and strips response suffixes. The resolver is asked
-     * for that name plus "Resource", the class the schema was built from.
+     * extracts the schema name and cuts it at the first response suffix it
+     * contains. The resolver is asked for that name plus "Resource".
      *
      * Example: "#/components/schemas/ProjectPaginatedResponse" -> "Project"
      */
@@ -528,7 +529,8 @@ class EndpointParameterEnricher
 
     /**
      * Build an example value for the filter_by parameter: the first default filter, else
-     * the first filterable field the resource schema shows a value for.
+     * the first filterable field the resource schema shows a value for that a filter
+     * can write.
      *
      * @param  array<string>  $filterableFields  Never empty: a list without any has no filter_by.
      * @param  array<string, OA\Property>|null  $properties
@@ -551,24 +553,39 @@ class EndpointParameterEnricher
     }
 
     /**
-     * A property's value as a filter writes it: its scalar example, or the first case of
-     * the enum schema it refers to (directly, or as a nullable `allOf`); booleans as
-     * `true`/`false`. Null when it shows neither.
+     * A property's value as a filter writes it: its example, else the first case of its
+     * enum, inline or the enum schema it refers to (directly, or as a nullable `allOf`).
+     * Null when it shows no value a filter can write.
      */
     private function filterValue(OA\Schema $property): ?string
     {
-        $value = $property->example;
+        $enum = is_array($property->enum) ? $property->enum : $this->referencedSchema($property)?->enum;
 
-        if ($value === OpenApiGen::UNDEFINED || ! is_scalar($value) || $value === '') {
-            $enum = $this->referencedSchema($property)?->enum;
-            $value = is_array($enum) && ! empty($enum) ? reset($enum) : null;
+        foreach ([$property->example, ...(is_array($enum) ? $enum : [])] as $value) {
+            $written = $this->writtenAsFilter($value);
+
+            if ($written !== null) {
+                return $written;
+            }
         }
 
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
+        return null;
+    }
+
+    /**
+     * A value as `field:value` writes it, booleans as `true`/`false`; null for one it
+     * can't: not a scalar, empty, or containing `:`, which the filter grammar reads as
+     * the start of an operator (`field:<op>:value`).
+     */
+    private function writtenAsFilter(mixed $value): ?string
+    {
+        if ($value === OpenApiGen::UNDEFINED || ! is_scalar($value)) {
+            return null;
         }
 
-        return is_scalar($value) && $value !== '' ? (string) $value : null;
+        $written = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+
+        return $written === '' || str_contains($written, ':') ? null : $written;
     }
 
     /**

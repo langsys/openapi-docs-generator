@@ -539,6 +539,82 @@ test('filter_by example falls back to the first field when the resource shows no
     ]],
 ]);
 
+test('filter_by example skips a value a filter can\'t write', function (OA\Property $first, string $expected) {
+    $openapi = withResourceSchemas(
+        buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']),
+        projectResourceSchema(
+            $first,
+            new OA\Property(['property' => 'name', 'type' => 'string', 'example' => 'Acme']),
+        ),
+    );
+
+    $data = new EndpointParameterData(filterableFields: [(string) $first->property, 'name']);
+
+    (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi);
+
+    expect($openapi->paths[0]->get->parameters[0]->example)->toBe($expected);
+})->with([
+    // `field:<op>:value`: the colons would read as an operator.
+    'a date-time' => [new OA\Property(['property' => 'created_at', 'type' => 'string', 'format' => 'date-time', 'example' => '2024-01-15T10:30:00+00:00']), 'name:Acme'],
+    'a URL' => [new OA\Property(['property' => 'website_url', 'type' => 'string', 'example' => 'https://example.com']), 'name:Acme'],
+    'an empty string' => [new OA\Property(['property' => 'notes', 'type' => 'string', 'example' => '']), 'name:Acme'],
+    'a nullable allOf to an object' => [new OA\Property([
+        'property' => 'owner',
+        'allOf' => [new OA\Schema(['ref' => '#/components/schemas/User'])],
+        'nullable' => true,
+    ]), 'name:Acme'],
+    'zero, kept' => [new OA\Property(['property' => 'retries', 'type' => 'integer', 'example' => 0]), 'retries:0'],
+    'the string "0", kept' => [new OA\Property(['property' => 'code', 'type' => 'string', 'example' => '0']), 'code:0'],
+]);
+
+test('filter_by example falls back when every value has a colon', function () {
+    $openapi = withResourceSchemas(
+        buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']),
+        projectResourceSchema(new OA\Property(['property' => 'created_at', 'type' => 'string', 'example' => '2024-01-15T10:30:00+00:00'])),
+    );
+
+    $data = new EndpointParameterData(filterableFields: ['created_at']);
+
+    (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi);
+
+    expect($openapi->paths[0]->get->parameters[0]->example)->toBe('created_at:value');
+});
+
+test('filter_by example takes an enum\'s first case a filter can write', function (array $property, string $expected) {
+    $openapi = withResourceSchemas(
+        buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['filter_by']),
+        projectResourceSchema(new OA\Property(['property' => 'platform', ...$property])),
+        new OA\Schema(['schema' => 'Platform', 'type' => 'string', 'enum' => [null, 'android', 'ios'], 'nullable' => true]),
+    );
+
+    $data = new EndpointParameterData(filterableFields: ['platform']);
+
+    (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi);
+
+    expect($openapi->paths[0]->get->parameters[0]->example)->toBe($expected);
+})->with([
+    'inline, with no example' => [['type' => 'string', 'enum' => ['web', 'android']], 'platform:web'],
+    'a $ref whose first case is null' => [['ref' => '#/components/schemas/Platform'], 'platform:android'],
+    'its own example over its $ref\'s cases' => [[
+        'allOf' => [new OA\Schema(['ref' => '#/components/schemas/Platform'])],
+        'nullable' => true,
+        'example' => 'ios',
+    ], 'platform:ios'],
+]);
+
+test('filter_by is kept when it is not among the parameters to enrich', function () {
+    $openapi = buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['order_by', 'filter_by']);
+
+    $data = new EndpointParameterData(orderableFields: ['title']);
+
+    (new EndpointParameterEnricher(resolver: buildMockResolver($data), parameterNames: ['order_by']))->enrich($openapi);
+
+    $params = $openapi->paths[0]->get->parameters;
+    expect($params)->toHaveCount(2)
+        ->and($params[0]->name)->toBe('order_by')
+        ->and($params[1]->ref)->toBe('#/components/parameters/filter_by');
+});
+
 test('it fails naming the path, the resource and the fields the resource lacks', function () {
     $openapi = withResourceSchemas(
         buildOpenApiWithRefParams('/api/projects', 'ProjectPaginatedResponse', ['order_by', 'filter_by']),
@@ -556,7 +632,7 @@ test('it fails naming the path, the resource and the fields the resource lacks',
     expect(fn () => (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi))
         ->toThrow(
             OpenApiDocsException::class,
-            '- GET /api/projects, Project: orderable `created_at`; filterable `action`, `expires_at`',
+            '- GET /api/projects, ProjectResource: orderable `created_at`; filterable `action`, `expires_at`',
         );
 });
 
@@ -570,7 +646,7 @@ test('it lists every operation whose fields its resource lacks in one failure', 
     expect(fn () => (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi))
         ->toThrow(
             OpenApiDocsException::class,
-            "- GET /api/projects, Project: filterable `action`\n- GET /api/projects/archived, Project: filterable `action`",
+            "- GET /api/projects, ProjectResource: filterable `action`\n- GET /api/projects/archived, ProjectResource: filterable `action`",
         );
 });
 
@@ -583,7 +659,7 @@ test('a list whose filter_by is left out is still checked', function () {
     $data = new EndpointParameterData(orderableFields: ['created_at']);
 
     expect(fn () => (new EndpointParameterEnricher(resolver: buildMockResolver($data)))->enrich($openapi))
-        ->toThrow(OpenApiDocsException::class, 'GET /api/projects, Project: orderable `created_at`');
+        ->toThrow(OpenApiDocsException::class, 'GET /api/projects, ProjectResource: orderable `created_at`');
 });
 
 test('the field check passes when the resource has every field', function () {

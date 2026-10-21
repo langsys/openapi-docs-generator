@@ -118,6 +118,6 @@ test('endpoint enrichment fails generation when a list names a field its resourc
     expect(fn () => generateWithQueryParameters($this->docsFile, [
         'enabled' => true,
         'resolver' => UnknownFieldEndpointParameterResolver::class,
-    ]))->toThrow(OpenApiDocsException::class, '- GET /api/projects, Project: orderable `created_at`')
+    ]))->toThrow(OpenApiDocsException::class, '- GET /api/projects, ProjectResource: orderable `created_at`')
         ->and(file_exists($this->docsFile))->toBeFalse();
 });
